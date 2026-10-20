@@ -1,0 +1,42 @@
+/* Lobby screen. Ported from design/mockup.html (.lobby/.cats/.sug/.invite/.time/.cd). No countdown (D9). */
+.lobby { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
+.lobby .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+.cats li, .sug li { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: var(--r-md); background: var(--win); border: 1px solid var(--line); margin-bottom: 8px; }
+.cats .n { width: 24px; height: 24px; border-radius: 8px; background: var(--panel2); display: grid; place-items: center; font: 700 12px var(--display); color: var(--mut); flex: none; }
+.cats .t, .sug .t { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cats .t.edit { background: none; border: 0; padding: 0; text-align: left; cursor: text; border-radius: 6px; }
+.cats .t.edit:hover { text-decoration: underline dotted var(--mut); text-underline-offset: 4px; }
+.cats input[type=text] { padding: 4px 10px; flex: 1; }
+.sug .by { display: flex; align-items: center; gap: 8px; flex: none; font-size: 12px; color: var(--mut); }
+.lobby .empty { color: var(--mut); padding: 8px; font-size: 13px; }
+.cats li.empty, .sug li.empty { border: 0; background: none; }
+.addrow { display: flex; gap: 8px; margin-top: 4px; }
+.addnote { color: var(--mut); font-size: 12px; margin-top: 6px; }
+
+.invite { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.invite > div { flex: 1; min-width: 160px; }
+.invite small { display: block; color: var(--mut); }
+.invite code { font: 600 22px ui-monospace, Menlo, Consolas, monospace; letter-spacing: .14em; background: var(--win); border: 1px dashed var(--mut); border-radius: var(--r-md); padding: 6px 14px; user-select: all; }
+
+.time { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: center; }
+.time output { font: 800 34px var(--display); min-width: 110px; font-variant-numeric: tabular-nums; }
+.time output small { font: 600 14px var(--body); color: var(--mut); }
+.time input[type=range] { width: 100%; accent-color: var(--pop); }
+.time input[type=range]:disabled { opacity: .55; }
+.ticks { display: flex; justify-content: space-between; color: var(--mut); font-size: 11px; margin-top: 2px; grid-column: 2; }
+
+.pl .tag { align-self: center; }
+.ready-box { margin-top: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--win); padding: 14px; display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.ready-box.go { border-color: #3ddc9788; }
+.ready-box .txt { font-weight: 600; flex: 1; min-width: 180px; }
+.ready-box .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.leave { margin-top: 10px; display: flex; justify-content: flex-end; }
+
+@media (max-width: 1000px) {
+  .lobby { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .time { grid-template-columns: 1fr; }
+  .ticks { grid-column: 1; }
+}

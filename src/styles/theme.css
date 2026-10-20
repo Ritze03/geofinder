@@ -1,0 +1,86 @@
+/* Geofinder global theme (dark, D7). Import ONCE from the app entry: `import './styles/theme.css'`.
+   Tokens come from design/mockup.html. Component styles live next to their components (src/ui/**.css).
+   Fonts: Google Fonts when online; the stacks below fall back to system fonts, so the app works offline. */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700;800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700;800&display=swap');
+
+:root {
+  /* palette */
+  --bg: #0b0b14;
+  --win: #13131e;
+  --panel: #1b1b2b;
+  --panel2: #252539;
+  --panel3: #2f2f48; /* hovered panel2 */
+  --line: #34344f;
+  --fg: #f3f2ff;
+  --mut: #9d9cbc;
+  --pop: #ffe14d;
+  --pop-hi: #fff06f;
+  --pop-ink: #1d1800;
+  --ok: #3ddc97;
+  --ok-bg: #12382a;
+  --bad: #ff6b6b;
+  --bad-bg: #4a2630;
+  --me: #ff6b5e; /* accent of the local player; screens may override it */
+
+  /* radii */
+  --r-sm: 9px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 99px;
+
+  /* fonts */
+  --display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --body: 'Figtree', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.45 var(--body);
+  background-image:
+    radial-gradient(900px 500px at 15% -10%, #2a1f4d55, transparent),
+    radial-gradient(800px 500px at 100% 110%, #0f3b4a55, transparent);
+  background-attachment: fixed;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--pop); outline-offset: 2px; }
+h1, h2, h3, p, ul { margin: 0; }
+ul { padding: 0; list-style: none; }
+h2 { font: 700 22px/1.15 var(--display); text-wrap: balance; }
+h3 { font: 700 15px var(--display); }
+[hidden] { display: none !important; }
+
+/* text helpers */
+.eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--mut); font-weight: 700; }
+.muted { color: var(--mut); }
+.num { font-variant-numeric: tabular-nums; }
+/* every time-left readout (D7): monospaced + tabular numbers */
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* text inputs (mockup: input[type=text]) */
+input[type=text] {
+  background: var(--win);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 10px 14px;
+  min-width: 0;
+  width: 100%;
+}
+input[type=text]:focus { border-color: var(--pop); outline: none; }
+input[type=text]::placeholder { color: var(--mut); opacity: .8; }
+
+/* a screen root: centered column, like the mockup's 1280px window content */
+.screen { max-width: 1280px; margin: 0 auto; padding: 16px; min-width: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
