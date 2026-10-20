@@ -9,6 +9,7 @@ const GOOGLE_MAPS = /^https:\/\/(www\.)?google\.[a-z.]+\/maps/
 const GOOGLE_OK = /^https:\/\/((www\.)?google\.[a-z.]+\/maps|consent\.google\.[a-z.]+\/)/
 
 let app, page, userData
+const navLog = [] // main-process navigation log, printed when a test fails (a bare URL mismatch explains nothing)
 
 const viewUrl = () => page.evaluate(() => window.mapPanel.webview.getURL())
 const inView = (code) => page.evaluate((c) => window.mapPanel.webview.executeJavaScript(c), code)
@@ -40,9 +41,27 @@ test.describe.configure({ mode: 'serial' })
 test.beforeAll(async () => {
   // Throwaway profile: a consent cookie from real runs must not decide the outcome.
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'geofinder-test-'))
-  app = await electron.launch({ args: [repoRoot], env: { ...process.env, GEOFINDER_USER_DATA: userData } })
+  app = await electron.launch({
+    args: [repoRoot],
+    env: { ...process.env, GEOFINDER_USER_DATA: userData, GEOFINDER_DEBUG_NAV: '1' },
+  })
+  const t0 = Date.now()
+  app.process().stdout.on('data', (d) =>
+    String(d).split('\n').filter((l) => l.includes('[nav]')).forEach((l) => navLog.push(`+${Date.now() - t0}ms ${l}`)))
   page = await app.firstWindow()
   await page.waitForFunction(() => !!window.mapPanel)
+  // Nothing but a click on a provider button may switch provider; record any, so a stray one is visible.
+  await page.evaluate(() => {
+    window.__providerClicks = []
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest?.('button[data-provider]')
+      if (b) window.__providerClicks.push(b.dataset.provider)
+    }, true)
+  })
+})
+
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status !== testInfo.expectedStatus) console.log(`navigation log:\n${navLog.join('\n')}`)
 })
 
 test.afterAll(async () => {
@@ -65,6 +84,8 @@ test('navigation lock blocks other sites and new windows', async () => {
   await inView('window.open("https://www.google.com/maps")').catch(() => {}) // even allowed URLs: no new windows
   await page.waitForTimeout(5000)
 
+  // Nothing here may switch provider; a physical click on the window while it runs would (and is not a bug).
+  expect(await page.evaluate(() => window.__providerClicks), 'provider buttons clicked during the lock test').toEqual([])
   expect(await viewUrl()).toMatch(GOOGLE_MAPS) // Google keeps pushState-ing its own URL, so match the site
   expect(app.windows().length).toBe(windowsBefore)
   expect(await app.evaluate(({ webContents }) => webContents.getAllWebContents().length)).toBe(contentsBefore)

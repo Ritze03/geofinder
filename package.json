@@ -5,6 +5,7 @@
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
+    "postinstall": "node node_modules/electron/install.js",
     "dev": "node electron/dev.mjs",
     "build": "vite build",
     "test": "node --test electron/allowlist.test.js",
