@@ -9,7 +9,7 @@
 .play-s .pbar .sp { flex: 1; }
 .play-s .dbtn { min-width: 150px; }
 .play-s .dcount { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.play-s .pbar .timer.low { border-color: var(--bad); }
+.play-s .pbar .timer:has(.low) { border-color: var(--bad); }
 
 /* minis: one avatar per player with capture count + done tick */
 .play-s .minis { display: flex; gap: 8px; }
