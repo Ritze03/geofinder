@@ -1,0 +1,71 @@
+/* Shared UI kit styles. Imported by src/ui/kit/index.js (needs src/styles/theme.css for the tokens). */
+
+/* cards */
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px; min-width: 0; }
+.card > header, .hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+
+/* buttons */
+.btn {
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-md); padding: 9px 16px; font-weight: 700;
+  display: inline-flex; gap: 8px; align-items: center; justify-content: center; transition: transform .08s, background .15s;
+}
+.btn:hover { background: var(--panel3); }
+.btn:active { transform: scale(.97); }
+.btn.pop { background: var(--pop); color: var(--pop-ink); border-color: transparent; }
+.btn.pop:hover { background: var(--pop-hi); }
+.btn.lg { padding: 13px 22px; font-size: 16px; border-radius: 14px; }
+.btn.sm { padding: 5px 12px; font-size: 13px; }
+.btn.on { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+.btn:disabled:hover { background: var(--panel2); }
+.btn.pop:disabled:hover { background: var(--pop); }
+/* small square icon buttons: remove / accept / reject */
+.ibtn { width: 30px; height: 30px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel2); display: grid; place-items: center; flex: none; font-size: 13px; padding: 0; }
+.ibtn.no:hover, .ibtn.x:hover { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+.ibtn.ok { color: var(--ok); }
+.ibtn.ok:hover { background: #17402f; border-color: var(--ok); }
+
+/* tags + pills */
+.tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: var(--r-pill); background: var(--panel2); color: var(--mut); border: 1px solid var(--line); white-space: nowrap; }
+.tag.host { color: var(--pop); border-color: #ffe14d55; }
+.count { background: var(--pop); color: var(--pop-ink); font: 700 12px var(--display); border-radius: var(--r-pill); padding: 2px 9px; }
+.st { border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-pill); padding: 5px 14px; font-size: 13px; font-weight: 700; color: var(--mut); white-space: nowrap; }
+.st.on { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+
+/* avatar */
+.av { display: block; flex: none; }
+.ring { display: grid; place-items: center; border-radius: 50%; padding: 3px; background: var(--c, var(--me)); flex: none; }
+.ring .av { background: var(--win); border-radius: 50%; }
+
+/* player chip + list */
+.pchip { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
+.pchip .nm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.pchip .nm b { font-weight: 700; overflow-wrap: anywhere; }
+.pl li { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.pl li > .pchip { flex: 1; }
+.pl li.off { opacity: .45; }
+
+/* segmented toggle (map provider etc.) */
+.seg { display: inline-flex; background: var(--win); border: 1px solid var(--line); border-radius: 14px; padding: 4px; gap: 4px; }
+.seg button { border: 0; background: none; border-radius: 10px; padding: 8px 18px; font-weight: 700; color: var(--mut); display: flex; gap: 8px; align-items: center; }
+.seg button[aria-pressed="true"] { background: var(--pop); color: var(--pop-ink); }
+
+/* star rating */
+.stars { display: flex; gap: 2px; }
+.star { border: 0; background: none; font-size: 30px; line-height: 1; color: #45455f; padding: 0 2px; transition: transform .1s; }
+.star:hover:not(:disabled) { transform: scale(1.2); }
+.star.on { color: var(--pop); }
+.star:disabled { cursor: not-allowed; }
+
+/* timer */
+.timer-readout { font-weight: 800; font-size: 24px; letter-spacing: 0; }
+.timer-readout.low { color: var(--bad); }
+.timer { display: flex; align-items: center; gap: 10px; background: var(--win); border: 1px solid var(--line); border-radius: 14px; padding: 6px 16px; }
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; bottom: 22px; z-index: 1000; transform: translate(-50%, 30px); opacity: 0; pointer-events: none;
+  transition: .25s; background: var(--fg); color: #16121f; font-weight: 700; padding: 10px 18px; border-radius: var(--r-pill);
+  box-shadow: 0 10px 30px #0008; max-width: calc(100% - 32px); text-align: center;
+}
+.toast.show { transform: translate(-50%, 0); opacity: 1; }

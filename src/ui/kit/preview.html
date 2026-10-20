@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geofinder UI preview</title>
+  </head>
+  <body>
+    <!-- Dev harness: `npx vite`, then open http://localhost:5173/src/ui/kit/preview.html (optionally #profile or #lobby-host-ready etc.) -->
+    <nav id="pv-nav" style="display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid #34344f"></nav>
+    <div id="pv-stage"></div>
+    <style>#pv-log:empty{display:none}</style>
+    <pre id="pv-log" style="margin:16px;padding:10px 14px;background:#13131e;border:1px solid #34344f;border-radius:12px;max-height:180px;overflow:auto;font:12px/1.5 ui-monospace,monospace;color:#9d9cbc"></pre>
+    <script type="module" src="./preview.js"></script>
+  </body>
+</html>
