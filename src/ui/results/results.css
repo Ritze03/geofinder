@@ -1,0 +1,45 @@
+/* Results screen. Ported from design/mockup.html (.res/.podium/.pod/.tw table/.cell). */
+.res { display: flex; flex-direction: column; gap: 16px; }
+.res-head { text-align: center; }
+.res-head h2 { font-size: 36px; font-weight: 800; margin-top: 4px; }
+
+.podium { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 14px; align-items: end; max-width: 760px; width: 100%; margin: 6px auto 0; }
+.pod { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; min-width: 0; }
+.pod .blk {
+  width: 100%; border-radius: 18px 18px 0 0; background: linear-gradient(var(--c), color-mix(in srgb, var(--c) 40%, var(--panel)));
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding-top: 12px; color: #14101e;
+}
+.pod .blk b { font: 800 52px/1 var(--display); }
+.pod .blk span { font-weight: 700; }
+.pod .nm { font: 700 18px var(--display); overflow-wrap: anywhere; }
+.pod .crown { font-size: 26px; height: 30px; line-height: 30px; }
+.pod.p1 .blk { height: 170px; }
+.pod.p2 .blk { height: 128px; }
+.pod.p3 .blk { height: 96px; }
+
+.tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+.tw table { border-collapse: collapse; width: 100%; min-width: 760px; }
+.tw th { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); text-align: center; padding: 12px 8px; font-weight: 700; max-width: 130px; vertical-align: bottom; overflow-wrap: anywhere; }
+.tw th:first-child, .tw th.tot { text-align: left; }
+.tw td { padding: 6px 8px; border-top: 1px solid var(--line); text-align: center; }
+.tw tr.off { opacity: .55; }
+.tw td.pl { text-align: left; }
+.tw td.pl div { display: flex; align-items: center; gap: 12px; }
+.tw td.pl em { font: 800 18px var(--display); font-style: normal; color: var(--mut); width: 22px; }
+.tw td.pl b { font-weight: 700; overflow-wrap: anywhere; }
+.tw td.tot { font: 800 22px var(--display); text-align: left; }
+.tw td.tot small { font: 600 12px var(--body); color: var(--mut); margin-left: 4px; }
+.cell { display: grid; gap: 2px; place-items: center; border-radius: 10px; padding: 6px 0; background: color-mix(in srgb, var(--c) calc(var(--a) * 45%), transparent); font-variant-numeric: tabular-nums; }
+.cell b { font-weight: 700; }
+.cell small { color: var(--mut); font-size: 11px; }
+.cell.best b { color: var(--pop); }
+.cell.zero { opacity: .45; }
+
+.res .acts { display: flex; gap: 10px; justify-content: center; align-items: center; flex-wrap: wrap; }
+.res .wait { font-weight: 600; }
+
+@media (max-width: 560px) {
+  .podium { gap: 6px; }
+  .pod .blk b { font-size: 36px; }
+  .res-head h2 { font-size: 28px; }
+}
