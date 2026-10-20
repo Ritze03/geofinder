@@ -6,7 +6,9 @@
   "main": "electron/main.js",
   "scripts": {
     "dev": "node electron/dev.mjs",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "node --test electron/allowlist.test.js",
+    "test:electron": "vite build && playwright test -c tests/electron"
   },
   "dependencies": {
     "trystero": "0.26.0"

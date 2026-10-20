@@ -8,7 +8,6 @@ await server.listen()
 const url = server.resolvedUrls.local[0]
 console.log(`[dev] vite at ${url}`)
 
-// ponytail: --no-sandbox only if chrome-sandbox SUID is missing on this Linux box (not needed unless Electron refuses to start)
 const args = ['.']
 const child = spawn(electron, args, {
   stdio: 'inherit',
