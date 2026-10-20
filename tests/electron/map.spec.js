@@ -43,7 +43,7 @@ test.beforeAll(async () => {
   userData = fs.mkdtempSync(path.join(os.tmpdir(), 'geofinder-test-'))
   app = await electron.launch({
     args: [repoRoot],
-    env: { ...process.env, GEOFINDER_USER_DATA: userData, GEOFINDER_DEBUG_NAV: '1' },
+    env: { ...process.env, GEOFINDER_USER_DATA: userData, GEOFINDER_DEBUG_NAV: '1', GEOFINDER_MAP_ONLY: '1' },
   })
   const t0 = Date.now()
   app.process().stdout.on('data', (d) =>

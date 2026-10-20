@@ -8,7 +8,8 @@
     "postinstall": "node node_modules/electron/install.js",
     "dev": "node electron/dev.mjs",
     "build": "vite build",
-    "test": "node --test electron/allowlist.test.js",
+    "test": "node --test \"electron/*.test.js\" \"src/**/*.test.js\"",
+    "test:e2e": "playwright test",
     "test:electron": "vite build && playwright test -c tests/electron",
     "test:electron:headless": "bash tests/electron/headless-sway.sh npm run test:electron"
   },

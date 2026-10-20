@@ -1,0 +1,18 @@
+/* App chrome: header (room code + player count), notice banner, connecting card. Screens style themselves. */
+.app { --appbar-h: 48px; --play-h: calc(100vh - var(--appbar-h)); }
+.appbar {
+  display: flex; align-items: center; gap: 14px; height: var(--appbar-h); padding: 0 16px;
+  background: var(--win); border-bottom: 1px solid var(--line);
+}
+.appbar .brand { font: 800 16px var(--display); }
+.appbar .room {
+  font: 700 14px var(--mono); letter-spacing: .08em; color: var(--pop);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 12px;
+}
+.appbar .hcount { font-size: 13px; }
+.appbar .sp { flex: 1; }
+.notice {
+  max-width: 1248px; margin: 16px auto 0; padding: 12px 16px; border-radius: var(--r-md);
+  background: var(--bad-bg); border: 1px solid var(--bad); color: var(--fg); font-weight: 600;
+}
+.center-card { max-width: 520px; margin: 12vh auto 0; display: grid; gap: 14px; }

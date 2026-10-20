@@ -17,7 +17,7 @@ export function openLightbox({ src, caption = '', alt = '' }) {
   const box = h('figure', { class: 'lb-box' },
     h('img', { src, alt: alt || caption || 'Capture' }),
     h('figcaption', null, caption ? h('b', null, caption) : null, closeBtn));
-  const el = h('div', { class: 'lb', role: 'dialog', 'aria-modal': 'true', 'aria-label': caption || 'Capture', onClick: (e) => { if (e.target === el) close(); } }, box);
+  const el = h('div', { class: 'lb-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': caption || 'Capture', onClick: (e) => { if (e.target === el) close(); } }, box);
   const onKey = (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); close(); }
     else if (e.key === 'Tab') { e.preventDefault(); closeBtn.focus(); } // single focusable control: keep focus inside

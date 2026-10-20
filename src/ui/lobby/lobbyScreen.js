@@ -4,11 +4,25 @@
 // D9: no countdown. Everyone (host included) toggles Ready; the host's Start enables via canStart(state).
 // The skeleton is built once and render() patches it, so typed text / focus / the slider survive every snapshot.
 import {
-  CATEGORY_LABEL_MAX, INTENT, MAX_CATEGORIES, MAX_PLAYERS, MAX_SUGGESTIONS, ROUND_TIMES_MIN, makeId,
+  CATEGORY_LABEL_MAX, ERR, INTENT, MAX_CATEGORIES, MAX_PLAYERS, MAX_SUGGESTIONS, MIN_PLAYERS, ROUND_TIMES_MIN, makeId,
 } from '../../contracts.js';
+import { connectedPlayers, startBlocker } from '../../core/index.js';
 import { h, avatar, button, card, iconButton, playerList, showToast, statusPill, tag } from '../kit/index.js';
-import { canStart } from './canStart.js';
 import './lobby.css';
+
+/** Adapter over core's startBlocker (THE start rule, also used by the host on startGame) -> what this screen shows. */
+function canStart(state) {
+  const connected = connectedPlayers(state);
+  const total = connected.length;
+  const ready = connected.filter((p) => p.ready).length;
+  const blocker = startBlocker(state);
+  const reason = {
+    [ERR.tooFewPlayers]: `Need at least ${MIN_PLAYERS} players to start`,
+    [ERR.noCategories]: 'Add at least one category to start',
+    [ERR.notReady]: `Waiting for everyone to be ready (${ready}/${total})`,
+  }[blocker] ?? (blocker ? 'Cannot start yet' : null);
+  return { ok: blocker === null, reason, ready, total };
+}
 
 export function createLobbyScreen({ send, onLeave } = {}) {
   let view = null;

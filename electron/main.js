@@ -50,7 +50,21 @@ ipcMain.handle('geofinder:capture-map', async (event, id) => {
   return img.toJPEG(80)
 })
 
-function createWindow() {
+// Test hooks (unset in normal runs): GEOFINDER_MAP_ONLY=1 mounts just the bare map panel (src/main.js ?maponly) instead of the game;
+// GEOFINDER_QUERY='local&pid=h' adds URL params (e.g. the ?local transport and a per-window identity); GEOFINDER_SECOND_QUERY opens a 2nd window.
+function rendererQuery(extra) {
+  const q = new URLSearchParams(extra ?? process.env.GEOFINDER_QUERY ?? '')
+  if (process.env.GEOFINDER_MAP_ONLY) q.set('maponly', '1')
+  return q
+}
+function loadRenderer(win, extra) {
+  const q = rendererQuery(extra)
+  const devUrl = process.env.VITE_DEV_SERVER_URL
+  if (devUrl) win.loadURL(q.size ? `${devUrl}?${q}` : devUrl)
+  else win.loadFile(path.join(here, '..', 'dist', 'index.html'), { query: Object.fromEntries(q) })
+}
+
+function createWindow(query) {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -67,14 +81,14 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_e, code, desc, url) =>
     console.error('[main] renderer failed to load', code, desc, url))
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL
-  if (devUrl) win.loadURL(devUrl)
-  else win.loadFile(path.join(here, '..', 'dist', 'index.html'))
+  loadRenderer(win, query)
 }
 
 app.whenReady().then(() => {
   // Experiment hook for the Apple UA question; unset in normal runs.
   if (process.env.GEOFINDER_MAPS_UA) session.fromPartition(MAPS_PARTITION).setUserAgent(process.env.GEOFINDER_MAPS_UA)
   createWindow()
+  // Test hook: a second game window in the same app (two players over the ?local transport, e.g. GEOFINDER_SECOND_QUERY='local&pid=c1').
+  if (process.env.GEOFINDER_SECOND_QUERY) createWindow(process.env.GEOFINDER_SECOND_QUERY)
 })
 app.on('window-all-closed', () => app.quit())
