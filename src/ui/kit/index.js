@@ -6,7 +6,7 @@
  * -------------------------------------------------------------------------------------------------
  *   // each in-game screen: createXScreen(ctx) -> { el, render(view), destroy() }
  *   // ctx  = { send(intent), ...screen-specific callbacks }   // send() returns nothing; errors come back via view
- *   // view = { state: GameState, meId: string, clockOffset: number, imageUrl(imageId) -> string|null }
+ *   // view = { state: GameState, meId: string, clockOffset: number }
  *   // render() is called on every new snapshot and must be cheap and idempotent (patches in place; never loses input focus/text)
  *   // destroy() removes timers/listeners; the caller removes `el` from the DOM.
  *
@@ -17,7 +17,8 @@
  *
  * Intents are plain objects { type: INTENT.x, ...payload } exactly as typed in src/contracts.js
  * (e.g. { type:'acceptSuggestion', suggestionId } and { type:'removeCategory', categoryId }).
- * A screen `el` is a <section class="screen"> (max 1280 px, centred, 16 px padding).
+ * A screen `el` is a <section class="screen"> (16 px padding, full width; profile/lobby/results are capped to 1280 px and centred
+ * via [data-screen], any other screen can opt in with class `narrow`).
  * -------------------------------------------------------------------------------------------------
  */
 import './kit.css';

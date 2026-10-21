@@ -65,13 +65,13 @@ function show(key) {
     const stars = starRating({ value: 3, onRate: (n) => { log('rate', n); stars.set({ value: n }); } });
     const off = starRating({ value: 2, disabled: true });
     const seg = segmented({ label: 'Map provider', options: [{ value: 'g', label: 'Google Maps' }, { value: 'a', label: 'Apple Maps' }], value: 'g', onChange: (v) => log('provider', v) });
-    const wrap = h('div', { class: 'screen', style: 'display:flex;flex-direction:column;gap:18px;align-items:flex-start' },
+    const wrap = h('div', { class: 'screen narrow', style: 'display:flex;flex-direction:column;gap:18px;align-items:flex-start' },
       t.el, stars.el, off.el, seg.el, button({ label: 'Toast', onClick: () => showToast('Hello from the kit') }));
     current = { el: wrap, destroy: () => t.destroy() };
   } else {
     const sc = SCENARIOS[key];
     const lobby = createLobbyScreen({ send, onLeave: () => log('onLeave') });
-    lobby.render({ state: sc.state(), meId: sc.meId, clockOffset: 0, imageUrl: () => null });
+    lobby.render({ state: sc.state(), meId: sc.meId, clockOffset: 0 });
     current = lobby;
   }
   stage.append(current.el);

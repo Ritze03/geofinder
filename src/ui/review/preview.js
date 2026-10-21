@@ -1,10 +1,12 @@
-// Preview harness for the Review and Results screens (no app, no network).
+// Preview harness for the Review and Results screens (no app, no network, no webview): the live viewer is a stub that shows the url it
+// was given (window.__pv.calls records viewer.create / viewer.load(url) / viewer.destroy and every send()).
 // Each scenario is a fake GameState + the viewer's id. Intents are logged (console + #pv-log) AND applied to the fake state with core's
 // applyIntent as the viewer, so the harness behaves like a tiny host: stars stick, next/prev/show results/play again really navigate.
 import '../../styles/theme.css';
 import { PHASE, createInitialState } from '../../contracts.js';
 import { applyIntent } from '../../core/index.js';
 import { button, h } from '../kit/index.js';
+import { stubViewerFactory } from '../kit/previewStubs.js';
 import { createReviewScreen } from './reviewScreen.js';
 import { createResultsScreen } from '../results/resultsScreen.js';
 
@@ -22,21 +24,8 @@ const LOOKS = [
 ];
 const pid = (i) => `p${i}`;
 const cid = (ci, i) => `cap-${ci}-${i}`;
-const SKY = [['#6fb4ff', '#d6ecff'], ['#ffb36f', '#ffe9d1'], ['#9be6a8', '#e4ffe9'], ['#c3a4ff', '#f0e8ff']];
-
-/** A small generated "map screenshot" (SVG data URL, 16:10). */
-function fakeImage(ci, i) {
-  const [a, b] = SKY[(ci + i) % SKY.length];
-  const x = 60 + ((i * 97 + ci * 53) % 200);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300" viewBox="0 0 480 300">` +
-    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs>` +
-    `<rect width="480" height="300" fill="url(#g)"/><path d="M0 210 Q120 150 240 200 T480 180 V300 H0Z" fill="#00000022"/>` +
-    `<rect x="${x}" y="90" width="130" height="90" rx="14" fill="#fff" fill-opacity=".85"/><circle cx="${x + 190}" cy="150" r="${30 + i * 6}" fill="#e8484b"/>` +
-    `<text x="20" y="278" font-family="sans-serif" font-size="22" font-weight="700" fill="#14101e">${LOOKS[i][0]} · capture ${ci + 1}</text></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-const IMAGES = new Map();
-for (let ci = 0; ci < 3; ci++) for (let i = 0; i < 4; i++) IMAGES.set(cid(ci, i), fakeImage(ci, i));
+/** A fake Street View url, unique per capture (shape like a real one). */
+const spotUrl = (ci, i) => `https://www.google.com/maps/@${(48.1 + ci * 0.07 + i * 0.013).toFixed(7)},${(9.1 + i * 0.05).toFixed(7)},3a,53.6y,${(ci * 90 + i * 25) % 360}.43h,100.86t/data=!3m7!1e1!3m5!1sPANO-${ci}-${i}`;
 
 /**
  * Review/results GameState: 4 players (p0 host; p3 Sofia disconnected), 3 categories.
@@ -57,7 +46,7 @@ function gameState({ index = 0, phase = PHASE.review, missing = [], ratings = {}
     s.ratings[c.id] = {};
     for (let i = 0; i < 4; i++) {
       if (missing.includes(`${ci}:${i}`)) continue;
-      s.captures[c.id][pid(i)] = { captureId: cid(ci, i), playerId: pid(i), categoryId: c.id, at: 1000 + ci * 10 + i };
+      s.captures[c.id][pid(i)] = { captureId: cid(ci, i), playerId: pid(i), categoryId: c.id, at: 1000 + ci * 10 + i, url: spotUrl(ci, i) };
     }
   });
   for (const [i, perCat] of Object.entries(ratings)) {
@@ -81,7 +70,6 @@ const SCENARIOS = {
   'review-partial': { label: 'Review: partly rated (Lena)', meId: pid(1), state: () => gameState({ index: 1, ratings: PARTIAL }) },
   'review-nocapture': { label: 'Review: no capture (Jonas)', meId: pid(0), state: () => gameState({ index: 1, missing: ['1:2'] }) },
   'review-ownmissing': { label: 'Review: I have no capture', meId: pid(1), state: () => gameState({ index: 1, missing: ['1:1'] }) },
-  'review-loading': { label: 'Review: image loading', meId: pid(1), loading: [cid(0, 0), cid(0, 2)], state: () => gameState({ index: 0 }) },
   'review-last': { label: 'Review: last category (host)', meId: pid(0), state: () => gameState({ index: 2, ratings: FINAL_LAST() }) },
   'review-last-player': { label: 'Review: last category (player)', meId: pid(2), state: () => gameState({ index: 2, ratings: FINAL_LAST() }) },
   'results-tie': { label: 'Results: tie (host)', meId: pid(0), state: () => gameState({ phase: PHASE.results, missing: ['2:3'], ratings: FINAL }) },
@@ -98,12 +86,16 @@ let screen = null;     // current screen object
 let screenKind = '';   // 'review' | 'results' | 'other'
 let state = null;
 let sc = null;
+const calls = [];
+const createViewer = stubViewerFactory(calls, log);
+window.__pv = { calls, createViewer, spotUrl, get state() { return state; }, get screen() { return screen; } };
 
 function view() {
-  return { state, meId: sc.meId, clockOffset: 0, imageUrl: (id) => ((sc.loading || []).includes(id) ? null : IMAGES.get(id) || null) };
+  return { state, meId: sc.meId, clockOffset: 0 };
 }
 
 function send(intent) {
+  calls.push({ kind: 'send', arg: intent });
   log('intent', intent);
   const r = applyIntent(state, sc.meId, intent, Date.now());
   if (r.error) { log('refused', r.error); return; }
@@ -117,7 +109,7 @@ function mount() {
     screen?.destroy();
     stage.replaceChildren();
     screenKind = kind;
-    screen = kind === 'review' ? createReviewScreen({ send })
+    screen = kind === 'review' ? createReviewScreen({ send, createViewer })
       : kind === 'results' ? createResultsScreen({ send })
         : { el: h('section', { class: 'screen', id: 'pv-other' }, h('h2', null, `Phase: ${state.phase}`), h('p', { class: 'muted' }, '(the app would show this screen)')), render() {}, destroy() {} };
     stage.append(screen.el);
@@ -135,6 +127,7 @@ function show(key) {
   logEl.textContent = '';
   history.replaceState(null, '', `#${key}`);
   [...nav.children].forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.key === key)));
+  calls.length = 0;
   mount();
 }
 

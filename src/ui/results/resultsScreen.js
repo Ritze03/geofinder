@@ -1,6 +1,6 @@
 // Results screen. Renders a GameState snapshot (phase 'results'), never changes state itself.
 //   createResultsScreen({ send }) -> { el, render(view), destroy() }
-//   view = { state, meId, clockOffset, imageUrl }   (images are not used here)
+//   view = { state, meId, clockOffset }
 // Final points per player come from core's ranking(state) (ties share a rank: 1,1,3). Podium for the top ranks (<= 3), a per-category
 // breakdown table for everybody. Host: "Review again" (reviewAgain) and "Play again" (playAgain); everybody else waits for the host.
 import { INTENT, STARS_MAX } from '../../contracts.js';

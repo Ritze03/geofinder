@@ -78,8 +78,10 @@ input[type=text] {
 input[type=text]:focus { border-color: var(--pop); outline: none; }
 input[type=text]::placeholder { color: var(--mut); opacity: .8; }
 
-/* a screen root: centered column, like the mockup's 1280px window content */
-.screen { max-width: 1280px; margin: 0 auto; padding: 16px; min-width: 0; }
+/* a screen root: full window width. Play and Review hold live maps and must not be capped. */
+.screen { padding: 16px; min-width: 0; }
+/* the form-like screens stay a centered column, like the mockup's 1280px window content */
+.screen[data-screen="profile"], .screen[data-screen="lobby"], .screen[data-screen="results"], .screen.narrow { max-width: 1280px; margin: 0 auto; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
