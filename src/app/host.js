@@ -30,6 +30,7 @@ export function createHost({ session, state: initial, onState, onIntentError }) 
 
   const offs = [
     session.on(SESSION_EVENT.peerJoin, (info) => {
+      if (info.playerId === SYSTEM) return;
       if (info.protocol !== PROTOCOL_VERSION) {
         session.send(MSG.reject, { reason: ERR.protocol }, info.playerId);
         return;
@@ -38,10 +39,10 @@ export function createHost({ session, state: initial, onState, onIntentError }) 
       if (err === ERR.full || err === ERR.started) session.send(MSG.reject, { reason: err }, info.playerId);
       else if (!err) session.send(MSG.state, snapshot(), info.playerId); // new seat or rejoin: bring them up to date at once
     }),
-    session.on(SESSION_EVENT.peerLeave, ({ playerId }) => { apply(SYSTEM, { type: HOST_INTENT.leave, playerId }); }),
+    session.on(SESSION_EVENT.peerLeave, ({ playerId }) => { if (playerId !== SYSTEM) apply(SYSTEM, { type: HOST_INTENT.leave, playerId }); }),
     session.on(MSG.intent, (data, from) => {
       const intent = data && data.intent;
-      if (!intent || typeof intent.type !== 'string') return;
+      if (!intent || typeof intent.type !== 'string' || from === SYSTEM) return;   // SYSTEM is the host driver's own actor, never a peer (defence in depth: the session already refuses such hellos)
       apply(SYSTEM, { type: HOST_INTENT.tick }); // contract: tick right before applying, so a late intent sees the ended round
       const err = apply(from, intent);
       if (err && onIntentError) onIntentError(from, intent, err);

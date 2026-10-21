@@ -6,13 +6,18 @@
 //
 // Host leaving ends the game in v1 (D12): clients get SESSION_EVENT.hostGone and the app goes back to the start screen. `hostBack` is still
 // emitted (also once on the FIRST host hello of a normal join, and when a muted host speaks again); the app ignores it, no host resume in v1.
-import { MSG, SESSION_EVENT, PROTOCOL_VERSION, IMAGE_MAX_BYTES, sanitizeProfile } from '../contracts.js';
+import { MSG, SESSION_EVENT, PROTOCOL_VERSION, IMAGE_MAX_BYTES, SYSTEM, sanitizeProfile } from '../contracts.js';
 import { createTransport as createLocal } from './transports/local.js';
 import { createTransport as createTrystero } from './transports/trystero.js';
 
 export const HEARTBEAT_MS = 1000;   // every session broadcasts a tiny `hb` this often
 export const SILENCE_MS = 5000;     // a peer we have heard NOTHING from (any message incl. hb) for this long is treated as left
 const HB = 'hb';                    // session-internal action, not part of MSG
+// A hello is unauthenticated, so the claimed playerId must at least be harmless as an identity: never SYSTEM (host-internal actor), and only
+// letters/digits/hyphens (real ids are crypto.randomUUID()). No '_' or '$' keeps '__proto__' & co. out of the objects keyed by playerId.
+// Not strictly a UUID so that the unit tests can keep readable ids ('alice').
+const VALID_ID = /^[A-Za-z0-9-]{1,64}$/;
+const validId = (id) => typeof id === 'string' && id !== SYSTEM && VALID_ID.test(id);
 
 /** byte size of a binary payload, or -1 for anything that is not binary (JSON values) */
 const binarySize = (d) => (d instanceof ArrayBuffer || ArrayBuffer.isView(d) ? d.byteLength : typeof Blob !== 'undefined' && d instanceof Blob ? d.size : -1);
@@ -62,8 +67,17 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
   }
 
   function onHello(peerId, p, m) {
-    // ignore garbage and anything claiming OUR playerId (a second tab of the same install identity)
-    if (!m || typeof m.playerId !== 'string' || !m.playerId || m.playerId === playerId) return;
+    // ignore garbage, SYSTEM / malformed ids, and anything claiming OUR playerId (a second tab of the same install identity)
+    if (!m || !validId(m.playerId) || m.playerId === playerId) return;
+    // Seat hijack: the claimed playerId is still held by ANOTHER connection that we heard from within SILENCE_MS -> refuse the newcomer.
+    // Remembered as p.pending and retried on every heartbeat tick, so a real reload/rejoin gets in as soon as the old connection has left
+    // or gone silent. (No crypto: if the real owner is really gone, anybody who knows the room code can take the seat.)
+    const holder = peerOf.get(m.playerId);
+    if (holder && holder !== peerId && Date.now() - (peers.get(holder)?.lastSeen ?? 0) <= SILENCE_MS) { p.pending = m; return; }
+    // Host claim: a client that already knows its host ignores a second peer claiming isHost (a joining client takes the first claim;
+    // knowing the room code is the v1 trust boundary).
+    if (!isHost && m.isHost === true && hostPeerId !== null && hostPeerId !== peerId && peers.has(hostPeerId)) { p.pending = m; return; }
+    p.pending = null;
     const first = !p.info;
     const info = {
       playerId: m.playerId,
@@ -112,7 +126,8 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
   const timer = setInterval(() => {
     link.send(HB, 0);
     const now = Date.now();
-    for (const [peerId, p] of peers) if (now - p.lastSeen > SILENCE_MS) dropPeer(peerId);
+    for (const [peerId, p] of [...peers]) if (now - p.lastSeen > SILENCE_MS) dropPeer(peerId);
+    for (const [peerId, p] of peers) if (p.pending) onHello(peerId, p, p.pending);   // refused earlier: maybe the seat / host slot is free now
   }, HEARTBEAT_MS);
 
   const sendToHost = (type, data, { metadata } = {}) => {

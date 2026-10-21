@@ -2,7 +2,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { MSG, IMAGE_MAX_BYTES, IMAGE_REQUEST_MAX_IDS, IMAGE_REQUEST_TIMEOUT_MS, defaultProfile } from '../contracts.js';
 import { createSession } from './session.js';
-import { createImageStore } from './images.js';
+import { createImageStore, IMAGE_GRACE_MS, IMAGE_KEEP_MS } from './images.js';
 
 const sessions = [], stores = [];
 const roomOf = () => 'GEO-I' + Math.random().toString(36).slice(2, 8);
@@ -14,18 +14,31 @@ async function until(cond, ms = 3000) {
     await wait(10);
   }
 }
-/** session + image store with a manual scheduler: fallback timers only run when the test calls fire() */
+/** session + image store with a fake clock and scheduler: nothing time-based happens until the test calls advance(ms) */
 function make(room, name, isHost = false) {
   const s = createSession({ roomCode: room, transport: 'local', profile: { ...defaultProfile(), name }, playerId: name, isHost });
+  let t = 1000;
   const timers = new Set();
   const store = createImageStore(s, {
-    setTimeout: (fn) => { const t = { fn }; timers.add(t); return t; },
-    clearTimeout: (t) => timers.delete(t),
+    now: () => t,
+    setTimeout: (fn, ms) => { const x = { fn, at: t + ms }; timers.add(x); return x; },
+    clearTimeout: (x) => timers.delete(x),
     createObjectURL: (blob) => `blob:fake/${blob.size}/${blob.type}`,
     revokeObjectURL: () => {},
   });
   sessions.push(s); stores.push(store);
-  return { s, store, fire: () => { const due = [...timers]; timers.clear(); due.forEach((t) => t.fn()); }, pending: () => timers.size };
+  /** move the clock forward, firing every timer that falls due on the way (in order); then give the local transport a moment to deliver */
+  const advance = async (ms) => {
+    const end = t + ms;
+    for (;;) {
+      const due = [...timers].filter((x) => x.at <= end).sort((p, q) => p.at - q.at)[0];
+      if (!due) break;
+      timers.delete(due); t = Math.max(t, due.at); due.fn();
+    }
+    t = end;
+    await wait(60);
+  };
+  return { s, store, advance };
 }
 after(() => { for (const x of stores) x.dispose(); for (const s of sessions) s.leave(); });
 
@@ -93,7 +106,7 @@ test('oversize image: sendImage throws, and a hostile oversize broadcast is drop
   assert.equal(host.store.has('huge'), false);
 });
 
-test('requestMissing asks the OWNER only, grouped per owner; the answer goes to the requester only', async () => {
+test('requestMissing asks the OWNER only, grouped per owner, after the grace delay; the answer goes to the requester only', async () => {
   const { host, alice, bob } = await trio();
   alice.store.sendImage(jpeg(50, 1), { kind: 'capture', imageId: 'a1', categoryId: 'cat1' });
   host.store.sendImage(jpeg(60, 2), { kind: 'capture', imageId: 'h1', categoryId: 'cat1' });
@@ -103,6 +116,9 @@ test('requestMissing asks the OWNER only, grouped per owner; the answer goes to 
   const reqAtHost = tap(host.s, MSG.imgRequest), reqAtAlice = tap(alice.s, MSG.imgRequest), reqAtBob = tap(bob.s, MSG.imgRequest);
   const dataAtAlice = tap(alice.s, MSG.imgData), dataAtHost = tap(host.s, MSG.imgData), dataAtBob = tap(bob.s, MSG.imgData);
   bob.store.requestMissing([{ imageId: 'a1', ownerId: 'alice' }, { imageId: 'h1', ownerId: 'host' }, { imageId: 'a1', ownerId: 'alice' }]);
+  await bob.advance(IMAGE_GRACE_MS - 1);
+  assert.equal(reqAtAlice.length + reqAtHost.length, 0, 'nothing is asked inside the grace delay');
+  await bob.advance(1);
 
   await until(() => bob.store.has('a1') && bob.store.has('h1'));
   assert.deepEqual(reqAtAlice.map((r) => r.data), [{ imageIds: ['a1'] }]);
@@ -111,90 +127,126 @@ test('requestMissing asks the OWNER only, grouped per owner; the answer goes to 
   assert.equal(bob.store.get('a1').meta.ownerId, 'alice');
   assert.equal(bob.store.get('h1').bytes.byteLength, 60);
   await wait(150);
-  assert.equal(dataAtBob.length, 2);
+  assert.equal(dataAtBob.length, 2, 'exactly one copy of each');
   assert.equal(dataAtAlice.length, 0, 'replies are not broadcast');
   assert.equal(dataAtHost.length, 0, 'replies are not broadcast');
-  assert.equal(bob.pending(), 2, 'one fallback timer per owner group');
-  bob.fire();   // everything arrived: the fallback finds nothing missing and sends nothing
-  await wait(100);
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS * 5);   // everything arrived: nothing is asked again
   assert.equal(reqAtAlice.length + reqAtHost.length, 2);
 });
 
-test('timeout fallback: owner does not answer -> the request is broadcast and any holder replies to the requester only', async () => {
+test('grace delay: bytes that land during it cancel the ask completely', async () => {
   const { host, alice, bob } = await trio();
-  // alice made the image but no longer holds it; the host got a copy
-  host.store.sendImage(jpeg(70, 5), { kind: 'capture', imageId: 'x1', ownerId: 'alice', categoryId: 'cat1' });
-  await until(() => alice.store.has('x1') && bob.store.has('x1'));
-  bob.store.drop('x1');
-  alice.store.drop('x1');
-  const reqAtHost = tap(host.s, MSG.imgRequest), reqAtAlice = tap(alice.s, MSG.imgRequest);
-  const dataAtAlice = tap(alice.s, MSG.imgData);
-
-  bob.store.requestMissing([{ imageId: 'x1', ownerId: 'alice' }]);
-  await until(() => reqAtAlice.length === 1);
-  await wait(200);
-  assert.equal(bob.store.has('x1'), false);
-  assert.equal(reqAtHost.length, 0, 'before the timeout only the owner is asked');
-  assert.equal(bob.pending(), 1);
-
-  bob.fire();   // IMAGE_REQUEST_TIMEOUT_MS elapsed
-  await until(() => bob.store.has('x1'));
-  assert.equal(reqAtHost.length, 1);
-  assert.equal(reqAtAlice.length, 2, 'the broadcast reaches the owner too');
-  assert.deepEqual(reqAtHost[0].data, { imageIds: ['x1'] });
-  assert.equal(bob.store.get('x1').bytes[0], 5);
-  assert.equal(bob.store.get('x1').meta.ownerId, 'alice');
-  await wait(150);
-  assert.equal(dataAtAlice.length, 0, 'the holder answered the requester only');
+  const reqs = [tap(host.s, MSG.imgRequest), tap(alice.s, MSG.imgRequest)];
+  bob.store.requestMissing([{ imageId: 'late1', ownerId: 'alice' }]);   // the snapshot overtook the bytes
+  await bob.advance(1000);
+  alice.store.sendImage(jpeg(40, 6), { kind: 'capture', imageId: 'late1', categoryId: 'cat1' });
+  await until(() => bob.store.has('late1'));
+  await bob.advance(IMAGE_GRACE_MS + IMAGE_REQUEST_TIMEOUT_MS * 4);
+  assert.deepEqual(reqs.map((r) => r.length), [0, 0], 'no request at all');
 });
 
-test('an owner that is not connected (or unknown / ourselves) is broadcast to right away, no waiting', async () => {
+test('owner away (not connected / ourselves / unknown): ONE peer is asked, never a broadcast', async () => {
   const { host, alice, bob } = await trio();
   host.store.sendImage(jpeg(30, 8), { kind: 'chat', imageId: 'g1', ownerId: 'ghost' });
   await until(() => alice.store.has('g1') && bob.store.has('g1'));
-  alice.store.drop('g1');
-  const reqAtHost = tap(host.s, MSG.imgRequest);
-  alice.store.requestMissing([{ imageId: 'g1', ownerId: 'ghost' }]);
-  await until(() => alice.store.has('g1'));
-  assert.equal(reqAtHost.length, 1);
-  assert.equal(alice.pending(), 0);
+  alice.store.drop('g1'); bob.store.drop('g1');
+  const req = { host: tap(host.s, MSG.imgRequest), alice: tap(alice.s, MSG.imgRequest), bob: tap(bob.s, MSG.imgRequest) };
 
-  bob.store.drop('g1');
+  alice.store.requestMissing([{ imageId: 'g1', ownerId: 'ghost' }]);   // owner not connected
+  await alice.advance(IMAGE_GRACE_MS);
+  await until(() => alice.store.has('g1'));
+  assert.deepEqual([req.host.length, req.bob.length, req.alice.length], [1, 0, 0], 'the host only, not bob');
+
   bob.store.requestMissing(['g1']);   // bare id: owner unknown
+  await bob.advance(IMAGE_GRACE_MS);
   await until(() => bob.store.has('g1'));
-  assert.equal(bob.pending(), 0);
-  assert.equal(reqAtHost.length, 2);
+  assert.deepEqual([req.host.length, req.alice.length], [2, 0]);
+
   bob.store.requestMissing([{ imageId: 'g1', ownerId: 'bob' }]);   // already held: nothing happens
-  await wait(100);
-  assert.equal(reqAtHost.length, 2);
+  await bob.advance(IMAGE_GRACE_MS + 100);
+  assert.equal(req.host.length, 2);
   bob.store.drop('g1');
-  bob.store.requestMissing([{ imageId: 'g1', ownerId: 'bob' }]);   // owner == self: nobody to ask first
+  bob.store.requestMissing([{ imageId: 'g1', ownerId: 'bob' }]);   // owner == self: not a candidate, the host is asked
+  await bob.advance(IMAGE_GRACE_MS);
   await until(() => bob.store.has('g1'));
-  assert.equal(reqAtHost.length, 3);
+  assert.deepEqual([req.host.length, req.alice.length], [3, 0]);
 });
 
-test('repeated requestMissing (one call per snapshot) does not re-send until a full timeout has passed', async () => {
-  const room = roomOf();
-  let t = 1000;
-  const host = createSession({ roomCode: room, transport: 'local', profile: defaultProfile(), playerId: 'host', isHost: true });
-  const alice = createSession({ roomCode: room, transport: 'local', profile: defaultProfile(), playerId: 'alice', isHost: false });
-  sessions.push(host, alice);
-  const store = createImageStore(alice, { now: () => t, setTimeout: () => ({}), clearTimeout() {} });
-  stores.push(store);
-  await until(() => alice.peers().length === 1);
-  const req = tap(host, MSG.imgRequest);
+test('escalation order: owner, then the host, then (last resort) everybody; the broadcast repeats only every 2 timeouts', async () => {
+  const { host, alice, bob } = await trio();
+  // nobody holds it: the whole ladder runs
+  const reqAtHost = tap(host.s, MSG.imgRequest), reqAtAlice = tap(alice.s, MSG.imgRequest);
+  bob.store.requestMissing([{ imageId: 'nobody', ownerId: 'alice' }]);
+  const counts = () => [reqAtAlice.length, reqAtHost.length];
+
+  await bob.advance(IMAGE_GRACE_MS - 1);
+  assert.deepEqual(counts(), [0, 0]);
+  await bob.advance(1);                                    // 1st ask: the owner
+  assert.deepEqual(counts(), [1, 0]);
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS - 1);
+  assert.deepEqual(counts(), [1, 0]);
+  await bob.advance(1);                                    // 2nd ask: the next peer (host), the owner is not asked twice
+  assert.deepEqual(counts(), [1, 1]);
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS);             // last resort: broadcast, reaches both
+  assert.deepEqual(counts(), [2, 2]);
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS * 2 - 1);
+  assert.deepEqual(counts(), [2, 2]);
+  await bob.advance(1);                                    // and again, at the slower pace
+  assert.deepEqual(counts(), [3, 3]);
+  // an answer at any point ends it
+  host.store.sendImage(jpeg(9, 4), { kind: 'chat', imageId: 'nobody', ownerId: 'alice' });
+  await until(() => bob.store.has('nobody'));
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS * 6);
+  assert.deepEqual(counts(), [3, 3]);
+});
+
+test('escalation stops at the first holder: owner silent, host answers -> no broadcast', async () => {
+  const { host, alice, bob } = await trio();
+  host.store.sendImage(jpeg(70, 5), { kind: 'capture', imageId: 'x1', ownerId: 'alice', categoryId: 'cat1' });
+  await until(() => alice.store.has('x1') && bob.store.has('x1'));
+  bob.store.drop('x1'); alice.store.drop('x1');   // alice made it but no longer holds it
+  const reqAtHost = tap(host.s, MSG.imgRequest), reqAtAlice = tap(alice.s, MSG.imgRequest);
+  const dataAtAlice = tap(alice.s, MSG.imgData), dataAtBob = tap(bob.s, MSG.imgData);
+
+  bob.store.requestMissing([{ imageId: 'x1', ownerId: 'alice' }]);
+  await bob.advance(IMAGE_GRACE_MS);
+  assert.deepEqual([reqAtAlice.length, reqAtHost.length], [1, 0], 'before the timeout only the owner is asked');
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS);
+  await until(() => bob.store.has('x1'));
+  assert.deepEqual([reqAtAlice.length, reqAtHost.length], [1, 1]);
+  assert.deepEqual(reqAtHost[0].data, { imageIds: ['x1'] });
+  assert.equal(bob.store.get('x1').bytes[0], 5);
+  await bob.advance(IMAGE_REQUEST_TIMEOUT_MS * 4);
+  assert.deepEqual([reqAtAlice.length, reqAtHost.length], [1, 1]);
+  assert.equal(dataAtAlice.length, 0, 'the holder answered the requester only');
+  assert.equal(dataAtBob.length, 1);
+});
+
+test('repeated requestMissing (one call per snapshot) keeps the schedule: no extra asks, no restarted grace', async () => {
+  const { host, alice } = await trio();
+  const req = tap(host.s, MSG.imgRequest);
   const want = [{ imageId: 'm1', ownerId: 'host' }];
-  store.requestMissing(want); store.requestMissing(want); store.requestMissing(want);
+  for (let i = 0; i < 4; i++) { alice.store.requestMissing(want); await alice.advance(500); }   // 2 s of snapshots
+  assert.equal(req.length, 0, 'still inside the grace delay of the FIRST call');
+  await alice.advance(IMAGE_GRACE_MS - 2000);
+  for (let i = 0; i < 3; i++) alice.store.requestMissing(want);
   await until(() => req.length >= 1);
   await wait(100);
   assert.equal(req.length, 1);
-  t += IMAGE_REQUEST_TIMEOUT_MS - 1;
-  store.requestMissing(want);
+  await alice.advance(IMAGE_REQUEST_TIMEOUT_MS - 1);
+  alice.store.requestMissing(want);
   await wait(100);
   assert.equal(req.length, 1);
-  t += 1;
-  store.requestMissing(want);
-  await until(() => req.length === 2);
+});
+
+test('requestMissing forgets wanted ids that the caller no longer lists (replaced capture)', async () => {
+  const { host, alice } = await trio();
+  const req = tap(host.s, MSG.imgRequest);
+  alice.store.requestMissing([{ imageId: 'old1', ownerId: 'host' }]);
+  alice.store.requestMissing([{ imageId: 'new1', ownerId: 'host' }]);   // old1 was replaced in the next snapshot
+  await alice.advance(IMAGE_GRACE_MS);
+  await until(() => req.length === 1);
+  assert.deepEqual(req[0].data, { imageIds: ['new1'] });
 });
 
 test('requests are chunked to IMAGE_REQUEST_MAX_IDS ids per message; incoming requests are capped the same way', async () => {
@@ -202,6 +254,7 @@ test('requests are chunked to IMAGE_REQUEST_MAX_IDS ids per message; incoming re
   const reqAtHost = tap(host.s, MSG.imgRequest);
   const ids = Array.from({ length: IMAGE_REQUEST_MAX_IDS + 5 }, (_, i) => `k${i}`);
   alice.store.requestMissing(ids.map((imageId) => ({ imageId, ownerId: 'host' })));
+  await alice.advance(IMAGE_GRACE_MS);
   await until(() => reqAtHost.length === 2);
   assert.deepEqual(reqAtHost.map((r) => r.data.imageIds.length).sort((a, b) => a - b), [5, IMAGE_REQUEST_MAX_IDS]);
 
@@ -217,6 +270,30 @@ test('requests are chunked to IMAGE_REQUEST_MAX_IDS ids per message; incoming re
   host.s.send(MSG.imgRequest, { imageIds: 'garbage' }, 'alice');   // garbage requests are ignored, nothing throws
   alice.s.sendToHost(MSG.imgRequest, null);
   await wait(50);
+});
+
+test('retainOnly drops unreferenced images (revoking their URLs) but spares referenced and young ones', () => {
+  const revoked = [];
+  const s = createSession({ roomCode: roomOf(), transport: 'local', profile: defaultProfile(), playerId: 'solo', isHost: true });
+  sessions.push(s);
+  let t = 5000;
+  const store = createImageStore(s, { now: () => t, createObjectURL: (b) => `blob:${b.size}`, revokeObjectURL: (u) => revoked.push(u), setTimeout: () => ({}), clearTimeout() {} });
+  stores.push(store);
+  store.sendImage(jpeg(11), { kind: 'capture', imageId: 'kept' });
+  store.sendImage(jpeg(12), { kind: 'capture', imageId: 'replaced' });
+  store.objectUrl('kept'); store.objectUrl('replaced');
+  t += IMAGE_KEEP_MS - 1;
+  store.sendImage(jpeg(13), { kind: 'capture', imageId: 'justSent' });   // its ref has not reached a snapshot yet
+
+  assert.deepEqual(store.retainOnly(new Set(['kept'])), [], 'nothing is IMAGE_KEEP_MS old yet');
+  t += 1;   // kept / replaced are now IMAGE_KEEP_MS old, justSent is 1 ms old
+  assert.deepEqual(store.retainOnly(new Set(['kept'])), ['replaced']);
+  assert.deepEqual(revoked, ['blob:12']);
+  assert.deepEqual(store.ids().sort(), ['justSent', 'kept']);
+  t += IMAGE_KEEP_MS;
+  assert.deepEqual(store.retainOnly(new Set()), ['kept', 'justSent']);
+  assert.deepEqual(revoked, ['blob:12', 'blob:11']);
+  assert.deepEqual(store.ids(), []);
 });
 
 test('drop/dispose free object URLs', () => {
