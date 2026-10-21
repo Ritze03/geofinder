@@ -11,6 +11,12 @@ const HEAD_SHAPES = {
   dome: (c) => `<path d="M50 8C80 8 92 60 87 78Q85 92 70 92H30Q15 92 13 78C8 60 20 8 50 8Z" fill="${c}"/>`,
 };
 
+// The mockup draws every head a little low in the 0..100 box (round/square sit at y 52, wide at 54, the dome's
+// broad shoulders pull it down too), so inside the circular ring the head looked off-centre. Each head is shifted
+// up by this many units via the viewBox (head, highlight and face move together, the drawing itself is untouched)
+// so the centre of the smallest circle enclosing the head (= its area centroid, within 0.1) lands on 50,50.
+const HEAD_DY = { round: 2, square: 2, wide: 4, hex: 0.35, dome: 4.55 };
+
 const FACE_SHAPES = {
   happy: `<circle cx="36" cy="47" r="5.5" fill="${K}"/><circle cx="64" cy="47" r="5.5" fill="${K}"/><path d="M33 63Q50 80 67 63" stroke="${K}" stroke-width="5" fill="none" stroke-linecap="round"/>`,
   cool: `<rect x="20" y="38" width="26" height="17" rx="7" fill="${K}"/><rect x="54" y="38" width="26" height="17" rx="7" fill="${K}"/><path d="M46 45h8" stroke="${K}" stroke-width="4"/><path d="M38 67Q50 76 62 66" stroke="${K}" stroke-width="5" fill="none" stroke-linecap="round"/>`,
@@ -37,11 +43,12 @@ export const colorHex = (colorId) => (COLORS.find((c) => c.id === colorId) || CO
  */
 export function avatarSvg(look, size = 40) {
   const c = colorHex(look && look.color);
-  const head = (HEAD_SHAPES[look && look.head] || HEAD_SHAPES.round)(c);
+  const headId = look && Object.hasOwn(HEAD_SHAPES, look.head) ? look.head : 'round';
+  const head = HEAD_SHAPES[headId](c);
   const face = FACE_SHAPES[look && look.face] || FACE_SHAPES.happy;
   const id = `avclip${clipN++}`;
   return toNode(
-    `<svg class="av" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="${id}">${head}</clipPath></defs>${head}` +
+    `<svg class="av" width="${size}" height="${size}" viewBox="0 ${HEAD_DY[headId]} 100 100" aria-hidden="true"><defs><clipPath id="${id}">${head}</clipPath></defs>${head}` +
       `<path clip-path="url(#${id})" d="M22 36Q30 19 50 15" stroke="#fff" stroke-opacity=".35" stroke-width="5" fill="none" stroke-linecap="round"/>${face}</svg>`,
   );
 }
