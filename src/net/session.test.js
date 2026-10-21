@@ -170,17 +170,84 @@ test('a rejoining client (same playerId, new transport) is reported as that play
   assert.equal(got[0].from, 'alice');
 });
 
-test('a reload that beats the old connection timing out replaces it without leave events', async () => {
+test('seat hijack: a second connection claiming a playerId whose owner is still alive is refused; it gets in once the owner has left', async () => {
   const g = roomOf();
   const host = make(g, 'host', true);
   const joins = record(host, SESSION_EVENT.peerJoin), left = record(host, SESSION_EVENT.peerLeave);
-  make(g, 'alice');   // old connection stays open
+  const atHost = record(host, MSG.intent);
+  const a1 = make(g, 'alice');   // the real alice
   await until(() => joins.length === 1);
-  make(g, 'alice');   // same playerId, new peer id
-  await until(() => joins.length === 2);
-  await wait(100);
+  const a2 = make(g, 'alice');   // same playerId, new peer id, while a1 is heartbeating
+  await wait(1500);              // > one heartbeat tick: the refused hello was retried and refused again
+  assert.equal(joins.length, 1);
   assert.equal(left.length, 0);
   assert.equal(host.peers().length, 1);
+  a2.sendIntent({ type: 'forged' });
+  a1.sendIntent({ type: 'real' });
+  await until(() => atHost.length >= 1);
+  await wait(100);
+  assert.deepEqual(atHost.map((x) => x.data.intent.type), ['real'], 'only the original owner speaks for alice');
+
+  a1.leave();   // a real owner gone: the pending newcomer takes the seat on the next tick
+  await until(() => joins.length === 2, 4000);
+  assert.deepEqual(left.map((x) => x.data.playerId), ['alice']);
+  a2.sendIntent({ type: 'mine' });
+  await until(() => atHost.some((x) => x.data.intent.type === 'mine'));
+});
+
+test('a reload whose old connection went silent (no clean leave) takes the seat after SILENCE_MS', { timeout: 15000 }, async () => {
+  const g = roomOf();
+  const host = make(g, 'host', true);
+  const joins = record(host, SESSION_EVENT.peerJoin);
+  const real = createLocal(g);
+  let muted = false;
+  const flaky = { ...real, send: (...args) => { if (!muted) real.send(...args); } };
+  open.push(createSession({ roomCode: g, transport: flaky, profile: profileOf('alice'), playerId: 'alice', isHost: false }));
+  await until(() => joins.length === 1);
+  muted = true;                // old tab frozen: still connected, says nothing
+  const a2 = make(g, 'alice');
+  await wait(1500);
+  assert.equal(joins.length, 1, 'refused while the old one was heard from recently');
+  await until(() => joins.length === 2, 9000);
+  const got = record(host, MSG.intent);
+  a2.sendIntent({ type: 'roll' });
+  await until(() => got.length === 1);
+  assert.equal(got[0].from, 'alice');
+});
+
+test('hello with a forged identity is dropped: SYSTEM, malformed or oversized ids never become a peer or an actor', async () => {
+  const g = roomOf();
+  const host = make(g, 'host', true);
+  const joins = record(host, SESSION_EVENT.peerJoin), atHost = record(host, MSG.intent);
+  const bad = ['$system', '', '__proto__', 'a b', 'x'.repeat(65), 'p\u0000', '../x'];
+  const evils = bad.map((id) => make(g, id));
+  const good = make(g, 'bob');
+  await until(() => joins.length === 1);
+  for (const e of evils) e.sendIntent({ type: 'leave', playerId: 'bob' });
+  good.sendIntent({ type: 'fine' });
+  await until(() => atHost.length === 1);
+  await wait(300);
+  assert.deepEqual(joins.map((j) => j.data.playerId), ['bob']);
+  assert.deepEqual(host.peers().map((p) => p.playerId), ['bob']);
+  assert.deepEqual(atHost.map((x) => x.from), ['bob']);
+  assert.equal(good.peers().length, 1, 'bob never learned the forged peers either');
+});
+
+test('a client that already knows its host ignores a second peer claiming isHost; a UUID playerId is accepted', async () => {
+  const g = roomOf();
+  const host = make(g, 'host', true), a = make(g, 'alice');
+  await until(() => a.hostPlayerId() === 'host');
+  const goneA = record(a, SESSION_EVENT.hostGone);
+  const uuid = crypto.randomUUID();
+  const mallory = make(g, uuid, true);   // claims to be a second host
+  const other = make(g, 'bob');
+  await until(() => a.peers().some((p) => p.playerId === 'bob'));
+  await wait(1500);
+  assert.equal(a.hostPlayerId(), 'host');
+  assert.equal(a.peers().some((p) => p.playerId === uuid), false, 'the false host claim is not accepted at all');
+  assert.equal(goneA.length, 0);
+  assert.ok(host.peers().some((p) => p.playerId === uuid), 'UUIDs are valid ids (the host does not care about the claim)');
+  assert.ok(mallory && other);
 });
 
 test('host leaving fires hostGone on clients; a new host session with the same playerId fires hostBack', async () => {

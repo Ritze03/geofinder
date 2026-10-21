@@ -8,6 +8,9 @@
 // Chunking/throttling of large payloads is done by Trystero itself. Action names must be 1..32 UTF-8 bytes.
 import { APP_ID, MSG, IMAGE_MAX_BYTES } from '../../contracts.js';
 
+/** Cap for every non-image action (hello, reject, intent, state, imgRequest, hb). Worst-case full snapshot: ~290 KB with all-CJK chat, ~170 KB with ASCII chat (measured in trystero.test.js), so 1 MiB leaves >3x headroom. */
+export const JSON_MAX_BYTES = 1024 * 1024;
+
 /** @param {string} roomCode Trystero room id
  *  @param {string[]} types action names to create (<= 32 bytes each); every peer must create the same set up front */
 export function createTransport(roomCode, types = Object.values(MSG)) {
@@ -21,8 +24,9 @@ export function createTransport(roomCode, types = Object.values(MSG)) {
     selfId = trystero.selfId;
     room = trystero.joinRoom({ appId: APP_ID }, roomCode, { onJoinError: (e) => errorHandler?.(new Error(e.error)) });
     for (const type of types) {
-      // an oversize image is declined before its chunks are even requested (the session also re-checks on delivery)
-      const config = type === MSG.imgData ? { onReceive: ({ byteLength }) => byteLength <= IMAGE_MAX_BYTES } : undefined;
+      // Declined before the payload is transferred (the session also re-checks images on delivery). Without onReceive Trystero accepts
+      // up to 256 MB per message, so JSON actions get a cap too: JSON_MAX_BYTES.
+      const config = { onReceive: ({ byteLength }) => byteLength <= (type === MSG.imgData ? IMAGE_MAX_BYTES : JSON_MAX_BYTES) };
       const action = room.makeAction(type, config);
       action.onMessage = (data, { peerId, metadata }) => handlers.get(type)?.(data, peerId, metadata);
       actions[type] = action;

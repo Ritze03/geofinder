@@ -135,12 +135,14 @@ export function startApp(root) {
     renderNow();
   }
 
-  /** Ask for every image the snapshot references and we do not hold (store dedupes repeats). */
+  /** Ask for every image the snapshot references and we do not hold (the store keeps its own schedule per id), and free held images
+   *  nothing references any more (replaced captures, trimmed chat, earlier rounds). The store spares images younger than 10 s. */
   function requestImages(g) {
     const refs = [];
     for (const byPlayer of Object.values(g.state.captures)) for (const c of Object.values(byPlayer)) refs.push({ imageId: c.captureId, ownerId: c.playerId });
     for (const m of g.state.chat) if (m.imageId) refs.push({ imageId: m.imageId, ownerId: m.playerId });
-    if (refs.length) g.store.requestMissing(refs);
+    g.store.requestMissing(refs);   // always the complete set, also when empty: the store forgets wanted ids that vanished
+    g.store.retainOnly(new Set(refs.map((r) => r.imageId)));
   }
 
   function renderNow() {
