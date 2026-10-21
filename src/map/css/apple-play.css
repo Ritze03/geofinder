@@ -1,0 +1,6 @@
+/* Apple Maps (maps.apple.com/frame, /look-around), 'play' mode: Apple has no account UI, and its sidebar IS the search UI,
+   so only the extra menu entries go (Guides, Directions, "Manage Your Business"). Search and its results stay. */
+.nav-button.guides-button, .nav-button.directions-button, .bc-link, .mw-popup-menu, .mw-menu-wrapper
+{ display: none !important; }
+a[href*="business"], [aria-label="Guides"], [aria-label="Directions"]
+{ display: none !important; }

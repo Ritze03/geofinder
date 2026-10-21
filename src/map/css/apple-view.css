@@ -1,0 +1,7 @@
+/* Apple Maps (maps.apple.com/frame, /look-around), 'view' mode: keep canvas + compass + zoom + legal. Injected by mapPanel.js. */
+/* ids / stable-ish semantic names */
+#shell-nav, #shell-tray-card-container,
+/* mw-* class names are human-readable BEM-ish, look moderately stable (still undocumented) */
+.mw-map-type-control, .mw-user-location-control, .mw-popover, .mw-popup-menu, .mw-menu-wrapper, .mw-card,
+.mw-rotation-slider, .mw-brand
+{ display: none !important; }

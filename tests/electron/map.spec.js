@@ -14,7 +14,8 @@ const navLog = [] // main-process navigation log, printed when a test fails (a b
 const viewUrl = () => page.evaluate(() => window.mapPanel.webview.getURL())
 const inView = (code) => page.evaluate((c) => window.mapPanel.webview.executeJavaScript(c), code)
 
-// Click Google's cookie consent through if it shows up, then wait for the map itself.
+// Wait for the map itself. A consent page should never show (SOCS cookie pre-seeded in electron/main.js, and mapPanel
+// auto-rejects as a fallback); the click below is only a harmless safety net for a slow auto-reject.
 async function reachGoogleMaps() {
   await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(GOOGLE_OK)
   if ((await viewUrl()).includes('consent.google.')) {
@@ -22,18 +23,6 @@ async function reachGoogleMaps() {
       .find((b) => /accept all|alle akzeptieren/i.test(b.innerText || b.value))?.click()`)
   }
   await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(GOOGLE_MAPS)
-}
-
-// Width from the JPEG SOF marker.
-function jpegWidth(bytes) {
-  let i = 2
-  while (i < bytes.length) {
-    if (bytes[i] !== 0xff) { i++; continue }
-    const marker = bytes[i + 1]
-    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) return (bytes[i + 7] << 8) | bytes[i + 8]
-    i += 2 + ((bytes[i + 2] << 8) | bytes[i + 3])
-  }
-  throw new Error('no SOF marker')
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -69,10 +58,12 @@ test.afterAll(async () => {
   fs.rmSync(userData, { recursive: true, force: true })
 })
 
-test('window opens with Google Maps in the map panel', async () => {
+test('window opens with Google Maps in the map panel, without a consent page', async () => {
   expect(await page.title()).toBe('Geofinder')
   await expect(page.locator('webview')).toHaveCount(1)
   await reachGoogleMaps()
+  // Fresh profile (EU users get consent.google.com first): the pre-seeded SOCS cookie must skip it entirely.
+  expect(navLog.filter((l) => l.includes('consent.google.')), 'main-frame navigations to the consent page').toEqual([])
 })
 
 test('navigation lock blocks other sites and new windows', async () => {
@@ -102,16 +93,63 @@ test('provider buttons switch between Apple Maps and Google Maps', async () => {
   await reachGoogleMaps()
 })
 
-test('capture returns a JPEG of the map view', async () => {
-  await page.waitForTimeout(3000) // let tiles paint
-  const bytes = await page.evaluate(async () => {
-    const blob = await window.mapPanel.capture()
-    return { type: blob.type, data: Array.from(new Uint8Array(await blob.arrayBuffer())) }
+test('getUrl returns the live Google Maps URL without tracking params', async () => {
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@/)
+  const u = await page.evaluate(() => window.mapPanel.getUrl())
+  expect(u).not.toMatch(/[?&](g_ep|entry)=/)
+})
+
+test('load(url) restores a Street View URL', async () => {
+  const sv = 'https://www.google.com/maps/@48.7784234,9.1799782,3a,75y,123.43h,90t/data=!3m1!1e1'
+  await page.evaluate((u) => window.mapPanel.load(u), sv)
+  await expect
+    .poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 })
+    .toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@48\.778\d*,9\.179\d*,3a,.*\/data=/)
+})
+
+// Hidden = display:none (offsetParent is null for any position:fixed ancestor, so check the computed style).
+const searchBox = `(() => { const e = document.querySelector('[role=search]'); return e ? getComputedStyle(e).display : 'missing' })()`
+
+test('play mode keeps the search box, hides sign-in; view mode hides all provider chrome', async () => {
+  await page.evaluate((u) => window.mapPanel.load(u), 'https://www.google.com/maps')
+  await reachGoogleMaps()
+  await expect.poll(() => inView(searchBox), { timeout: 30_000 }).not.toMatch(/none|missing/)
+  await expect.poll(() => inView(`(() => { const e = document.querySelector('#gb'); return e ? getComputedStyle(e).display : 'missing' })()`), { timeout: 30_000 }).toBe('none')
+
+  // A second, 'view'-mode panel next to it (window.createMapPanel is exposed by src/main.js in maponly mode).
+  await page.evaluate(() => {
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;right:0;bottom:0;width:640px;height:420px;z-index:10'
+    document.body.append(host)
+    window.viewPanel = window.createMapPanel(host, { mode: 'view' })
   })
-  const data = Uint8Array.from(bytes.data)
-  expect(bytes.type).toBe('image/jpeg')
-  expect([...data.slice(0, 3)]).toEqual([0xff, 0xd8, 0xff])
-  expect(data.length).toBeGreaterThan(20_000)
-  expect(jpegWidth(data)).toBeLessThanOrEqual(1280)
-  expect(jpegWidth(data)).toBeGreaterThan(300)
+  const inViewPanel = (code) => page.evaluate((c) => window.viewPanel.webview.executeJavaScript(c), code)
+  const viewUrl2 = () => page.evaluate(() => window.viewPanel.getUrl())
+  await expect.poll(viewUrl2, { timeout: 60_000 }).toMatch(GOOGLE_MAPS)
+  expect(await page.locator('.map-panel-view .map-bar').count()).toBe(0) // no provider bar in view mode
+  await expect.poll(() => inViewPanel(searchBox), { timeout: 30_000 }).toBe('none')
+  expect(await inViewPanel(`document.querySelector('[role=search]').offsetParent`)).toBeNull()
+  await page.evaluate(() => window.viewPanel.destroy())
+  await expect(page.locator('webview')).toHaveCount(1)
+})
+
+test('consent fallback: a stale SOCS cookie still reaches Maps (auto Reject all)', async () => {
+  const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'geofinder-test-'))
+  const app2 = await electron.launch({
+    args: [repoRoot],
+    env: { ...process.env, GEOFINDER_USER_DATA: ud, GEOFINDER_DEBUG_NAV: '1', GEOFINDER_MAP_ONLY: '1', GEOFINDER_SOCS: 'CAA' }, // 'CAA' = no choice made yet
+  })
+  try {
+    const nav2 = []
+    app2.process().stdout.on('data', (d) => String(d).split('\n').filter((l) => l.includes('[nav]')).forEach((l) => nav2.push(l)))
+    const page2 = await app2.firstWindow()
+    await page2.waitForFunction(() => !!window.mapPanel)
+    await expect
+      .poll(() => page2.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 })
+      .toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@/)
+    // Not asserting that the consent page showed: Google may stop serving it for a stale value; reaching Maps is the point.
+  } finally {
+    await app2.close()
+    fs.rmSync(ud, { recursive: true, force: true })
+  }
 })

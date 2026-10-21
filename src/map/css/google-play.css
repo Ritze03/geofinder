@@ -1,0 +1,15 @@
+/* Google Maps, 'play' mode: hide only sign-in/account and the menus. The search box and its results/place panel stay.
+   Careful: the place/results panel is a sibling of the nav rail inside the same left column, so never hide that column. */
+/* #gb = top-right bar (Google apps grid + "Sign in"/account) */
+#gb,
+/* left nav rail (hamburger "Menu", Saved, Recents, Get app): the div that directly wraps its <ul role=list>.
+   Structural; the :not()s keep it from ever matching a container of the place/results panel. */
+div:has(> ul[role="list"]):not(:has([role="main"], h1, input)),
+/* popup menus (hamburger/layers/account) */
+[role="menu"],
+/* fragile obfuscated class of the rail wrapper, observed Oct 2026 */
+.bJzME
+{ display: none !important; }
+/* locale-dependent aria-labels (de + en): hamburger if it shows up outside the rail, account button */
+button[aria-label="Menü"], button[aria-label="Menu"], a[aria-label^="Google-Konto"], a[aria-label^="Google Account"]
+{ display: none !important; }
