@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from 'electron'
+import { app, BrowserWindow, Menu, session } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isAllowedMapUrl } from './allowlist.js'
@@ -14,6 +14,15 @@ if (ENV.GEOFINDER_USER_DATA) app.setPath('userData', ENV.GEOFINDER_USER_DATA)
 
 // Navigation lock, enforced here (not in the renderer). Blocked silently.
 app.on('web-contents-created', (_e, wc) => {
+  // Packaged builds: no devtools, so the host cannot peek at other players' submissions (cheap deterrence, not security:
+  // the host process holds the full state anyway). Dev and test runs (unpackaged) keep them.
+  if (app.isPackaged) {
+    wc.on('devtools-opened', () => wc.closeDevTools())
+    wc.on('before-input-event', (event, input) => {
+      const k = input.key.toLowerCase()
+      if (input.type === 'keyDown' && (k === 'f12' || ((input.control || input.meta) && (input.shift || input.alt) && (k === 'i' || k === 'j' || k === 'c')))) event.preventDefault()
+    })
+  }
   // The host window only ever embeds <webview> tags; harden what they may get.
   wc.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
@@ -107,6 +116,7 @@ async function seedConsentCookie(maps) {
 }
 
 app.whenReady().then(async () => {
+  if (app.isPackaged) Menu.setApplicationMenu(null) // drops the default menu and its Ctrl+Shift+I / View > Toggle DevTools
   // Embedded Google/Apple pages get no permissions (geolocation, notifications, media, ...).
   const maps = session.fromPartition(MAPS_PARTITION)
   await seedConsentCookie(maps).catch((err) => console.error('[main] consent cookie not seeded', err))

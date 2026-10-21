@@ -29,7 +29,7 @@
 .play-s .map.flash::before { content: ""; position: absolute; inset: 0; background: #fff; z-index: 9; animation: pl-flash .35s ease-out forwards; pointer-events: none; }
 @keyframes pl-flash { from { opacity: .9; } to { opacity: 0; } }
 .play-s .ov { position: absolute; z-index: 3; }
-.play-s .dbanner { left: 14px; right: 14px; top: 14px; z-index: 8; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-radius: 14px; background: #2a2410; box-shadow: 0 4px 16px #0008; border: 1px solid #ffe14d88; font-weight: 700; }
+.play-s .dbanner { left: 14px; right: 14px; top: 14px; z-index: 30; pointer-events: none; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 16px; border-radius: 14px; background: #2a2410; box-shadow: 0 4px 16px #0008; border: 1px solid #ffe14d88; font-weight: 700; }
 .play-s .dbanner .timer-readout { font-size: 28px; color: var(--pop); margin-left: 4px; }
 .play-s .dbanner .bar { flex: 1; min-width: 120px; height: 8px; border-radius: 9px; background: var(--panel2); overflow: hidden; }
 .play-s .dbanner .bar i { display: block; height: 100%; width: 0; background: var(--pop); transition: width .25s linear; }
@@ -83,6 +83,7 @@
 .play-s .cin .btn { padding: 6px 12px; }
 
 /* chat-link viewer: covers the map slot only (the side column stays usable) */
+.play-s .map:has(.dbanner:not([hidden])) .vw { top: 76px; }   /* leave the countdown banner (above the viewer) clear of the viewer's buttons */
 .play-s .vw { inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--bg); }
 .play-s .vw-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .play-s .vw-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

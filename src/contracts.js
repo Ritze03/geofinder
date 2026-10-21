@@ -250,12 +250,10 @@ export const SESSION_EVENT = en('peerJoin', 'peerLeave', 'hostGone', 'hostBack',
 /** @typedef {null|boolean|number|string|Json[]|{[k:string]:Json}} Json */
 
 /** Low level link, one per transport (src/net/transports/{trystero,local}.js, each `createTransport(roomCode[, types])`).
- *  `send` takes an optional 4th arg `metadata` and handlers get it as 3rd arg (kept from the binary era; JSON-only traffic does not need it).
- *  Trystero: action.send(data, {target, metadata}) / action.onMessage = (data, {peerId, metadata}).
  *  @typedef {{
  *    selfId:string,
- *    send(type:string, data:(Json|ArrayBuffer|Uint8Array), targetPeerId?:string, metadata?:Json): void,   // no target => all peers
- *    onMessage(type:string, handler:(data:any, peerId:string, metadata?:Json) => void): void,
+ *    send(type:string, data:Json, targetPeerId?:string): void,   // no target => all peers
+ *    onMessage(type:string, handler:(data:any, peerId:string) => void): void,
  *    onPeerJoin(handler:(peerId:string) => void): void,
  *    onPeerLeave(handler:(peerId:string) => void): void,
  *    onError?(handler:(e:Error) => void): void,
@@ -336,7 +334,7 @@ export const HOST_INTENT = en('join', 'leave', 'tick');
 //     the viewer does not own comes back with url:null (the ref itself stays, so counts like "2 of 4 found it" still work). In every other
 //     phase stateFor returns the same object unchanged, so review/results see all urls. stateFor is a pure core selector
 //     (src/core/selectors.js, exported from src/core); it never mutates its input.
-//  The URL allowlist is electron/allowlist.js isAllowedMapUrl (also enforced by the webview navigation lock).
+//  The URL allowlist is electron/allowlist.js isAllowedMapUrl (map panels validate it in load() too: webview.loadURL bypasses the navigation lock).
 
 // ===== 8. Shared pure helpers =====
 

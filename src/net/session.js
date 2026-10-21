@@ -10,7 +10,7 @@ import { MSG, SESSION_EVENT, PROTOCOL_VERSION, SYSTEM, sanitizeProfile } from '.
 import { createTransport as createLocal } from './transports/local.js';
 import { createTransport as createTrystero } from './transports/trystero.js';
 
-export const HEARTBEAT_MS = 1000;   // every session broadcasts a tiny `hb` this often
+const HEARTBEAT_MS = 1000;   // every session broadcasts a tiny `hb` this often
 export const SILENCE_MS = 5000;     // a peer we have heard NOTHING from (any message incl. hb) for this long is treated as left
 const HB = 'hb';                    // session-internal action, not part of MSG
 // A hello is unauthenticated, so the claimed playerId must at least be harmless as an identity: never SYSTEM (host-internal actor), and only

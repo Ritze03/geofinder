@@ -177,7 +177,7 @@ export function startApp(root) {
   function currentMapUrl(g) {
     const url = g.map?.getUrl();
     if (!url) throw new Error('the map has not finished loading yet');
-    if (url.length > URL_MAX || !isAllowedMapUrl(url)) throw new Error('this page cannot be submitted, go back to the map first');
+    if (url.length > URL_MAX || !isAllowedMapUrl(url) || /^consent\.google\./.test(new URL(url).hostname)) throw new Error('this page cannot be submitted, go back to the map first');
     return url;
   }
 

@@ -1,4 +1,5 @@
 import './mapPanel.css'
+import { isAllowedMapUrl } from '../../electron/allowlist.js'
 import googleView from './css/google-view.css?raw'
 import googlePlay from './css/google-play.css?raw'
 import appleView from './css/apple-view.css?raw'
@@ -34,7 +35,7 @@ function hostOf(url) {
 }
 
 // Google appends entry=ttu&g_ep=... (tracking) to Maps URLs. Strip them textually (no re-encoding of the rest).
-export function cleanMapUrl(url) {
+function cleanMapUrl(url) {
   let u
   try {
     u = new URL(url)
@@ -53,7 +54,7 @@ export function cleanMapUrl(url) {
 //   mode 'play'  provider bar; light CSS (hides sign-in + menus; search stays)
 //   mode 'view'  no bar; full clean CSS (only map/panorama, zoom, compass, attribution)
 //   show('google' | 'apple')  resets the webview to that provider's start page
-//   load(url)    webview.loadURL(url); the main-process navigation lock still enforces the allowlist
+//   load(url)    webview.loadURL(url) if isAllowedMapUrl(url), else ignored (loadURL does not trigger the main-process navigation lock)
 //   getUrl()     current URL without Google's entry/g_ep params; null before dom-ready.
 //                Callers can test /look-around in it (Apple expanded Look Around) for the provider tip.
 //   destroy()    removes listeners, any drag overlay and the element
@@ -104,6 +105,7 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
     const p = PROVIDERS[provider]
     if (!p) throw new Error(`unknown map provider: ${provider}`)
     mark(provider)
+    if (!ready) return load(p.url) // loadURL throws before dom-ready: use the pending-url path
     webview.loadURL(p.url).catch(() => {}) // aborted/superseded loads are not errors here
   }
 
@@ -111,6 +113,7 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
 
   let pending = null // load() before the first dom-ready: becomes the start page, and is re-applied once ready if that did not take
   function load(url) {
+    if (!isAllowedMapUrl(url)) return // loadURL bypasses will-navigate, so the allowlist is enforced here
     if (!ready) {
       pending = url
       webview.setAttribute('src', url)
@@ -167,7 +170,7 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
     if (pending) {
       const url = pending
       pending = null
-      if (webview.getURL() !== url) webview.loadURL(url).catch(() => {})
+      if (isAllowedMapUrl(url) && webview.getURL() !== url) webview.loadURL(url).catch(() => {})
     }
     injectCss()
     maybeRejectConsent()

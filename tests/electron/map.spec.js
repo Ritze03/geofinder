@@ -82,6 +82,13 @@ test('navigation lock blocks other sites and new windows', async () => {
   expect(await app.evaluate(({ webContents }) => webContents.getAllWebContents().length)).toBe(contentsBefore)
 })
 
+test('load() ignores URLs outside the allowlist', async () => {
+  const before = await viewUrl()
+  await page.evaluate(() => window.mapPanel.load('https://example.com/'))
+  await page.waitForTimeout(3000)
+  expect(await viewUrl()).toBe(before)
+})
+
 test('provider buttons switch between Apple Maps and Google Maps', async () => {
   await page.click('button[data-provider=apple]')
   await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(/^https:\/\/maps\.apple\.com\//)

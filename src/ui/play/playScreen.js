@@ -132,6 +132,7 @@ export function createPlayScreen({ send, map, onCapture, onShare, createViewer }
   }
 
   function doCapture(categoryId) {
+    closeViewer();   // submit what is on screen: the play map, not the one hidden under the viewer
     if (busy.has(categoryId) || !view) return;
     const mine = myCapture(view.state, view.meId, categoryId);
     const timer = setTimeout(() => clearBusy(categoryId), BUSY_MS);
@@ -224,6 +225,7 @@ export function createPlayScreen({ send, map, onCapture, onShare, createViewer }
   }
   const myLastChatLink = (state, meId) => [...state.chat].reverse().find((m) => m.playerId === meId && m.url) || null;
   function doShare() {
+    closeViewer();   // share what is on screen: the play map, not the one hidden under the viewer
     if (shareBusy || !view) return;
     const last = myLastChatLink(view.state, view.meId);
     const caption = chatIn.value.trim().slice(0, CHAT_TEXT_MAX) || null;

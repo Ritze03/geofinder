@@ -2,8 +2,8 @@
 // onPeerJoin also fires for peers already present, messages never loop back, a peer that vanishes (bye / silence) fires onPeerLeave.
 import { APP_ID } from '../../contracts.js';
 
-export const LOCAL_HEARTBEAT_MS = 1000;
-export const LOCAL_SILENCE_MS = 4000;   // no packet from a peer for this long (tab killed, no `bye`) => peer left
+const LOCAL_HEARTBEAT_MS = 1000;
+const LOCAL_SILENCE_MS = 4000;   // no packet from a peer for this long (tab killed, no `bye`) => peer left
 const PING_TIMEOUT_MS = 5000;
 
 export function createTransport(roomCode) {

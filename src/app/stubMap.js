@@ -1,9 +1,10 @@
 // Stub map for plain browsers (e2e, `vite preview`): same API as createMapPanel() -> { element, show, load, getUrl, destroy }.
 // No real map: a plain panel whose "position" is a Google Maps URL (always isAllowedMapUrl-valid, so core accepts it). The position
 // starts at a spot derived from `seed` (the player name) and moves a step on every click on the view, like panning would. getUrl()
-// returns the current position; load(url) adopts any url and shows its text. The shown url is also in [data-url] (on the panel), so
+// returns the current position; load(url) adopts any allowed url and shows its text. The shown url is also in [data-url] (on the panel), so
 // tests can read it. Markup mirrors the real panel: .map-panel > (.map-bar +) .map-view. A 'view' stub has no bar.
 import '../map/mapPanel.css';
+import { isAllowedMapUrl } from '../../electron/allowlist.js';
 
 const PROVIDERS = { google: 'Google Maps', apple: 'Apple Maps' };
 const POS = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/;
@@ -72,7 +73,7 @@ export function createStubMap(container, { mode = 'play', seed = 'player' } = {}
       provider = p;
       set(home());
     },
-    load(next) { set(next); },
+    load(next) { if (isAllowedMapUrl(next)) set(next); },
     getUrl: () => url,
     destroy() { view.removeEventListener('click', onClick); element.remove(); },
   };

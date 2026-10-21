@@ -530,7 +530,7 @@ describe('chat', () => {
       const r = applyIntent(s, 'p1', { type: INTENT.chatLink, id: 'lk', url: APPLE_LA }, T0);
       assert.equal(r.state, s);
     }
-    bad(lobby(2), 'p1', { type: 'chat' + 'Image', id: 'm', url: GURL }, ERR.invalid);
+    bad(lobby(2), 'p1', { type: 'chatImage', id: 'm', url: GURL }, ERR.invalid);
   });
   test('duplicate chat id is ignored', () => {
     const s = ok(lobby(2), 'p1', { type: INTENT.chatText, id: 'm1', text: 'a' });

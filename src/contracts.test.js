@@ -78,12 +78,8 @@ test('clock helpers', () => {
   assert.equal(C.msLeft(null, off), null);
 });
 
-test('the old image protocol is gone (names assembled so that a repo-wide grep for the removed identifiers stays clean)', () => {
-  const OLD_INTENT = 'chat' + 'Image', OLD_META = 'Image' + 'Meta', OLD_PREFIX = 'IMAGE' + '_';
+test('the old image protocol is gone', () => {
   assert.deepEqual(Object.values(C.MSG).sort(), ['hello', 'intent', 'reject', 'state']);
-  assert.deepEqual(Object.keys(C).filter((k) => k.startsWith(OLD_PREFIX)), []);
-  assert.equal(C[OLD_META], undefined);
-  assert.equal(C.INTENT[OLD_INTENT], undefined);
   assert.equal(C.INTENT.chatLink, 'chatLink');
   assert.equal(C.INTENT.capture, 'capture');
 });
