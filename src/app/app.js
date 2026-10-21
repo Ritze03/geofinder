@@ -1,16 +1,18 @@
 // App controller: Profile -> (Create | Join) -> Connecting -> Lobby -> Play -> Review -> Results -> (Play again) Lobby.
-// The screen on show follows state.phase. One game = one session + one image store + (host) one host driver; leaving or being thrown out
+// The screen on show follows state.phase. One game = one session + (host) one host driver + one live map per Play entry; leaving or being thrown out
 // (reject, host gone) tears all of that down and lands on the Profile screen with a notice.
 //
 //   startApp(root)  URL params: ?local (BroadcastChannel transport instead of Trystero), ?pid=<x> (separate identity per tab, tests)
 //
-// Client: MSG.state (newer rev only) -> render. UI intents -> session.sendToHost(MSG.intent). Host: src/app/host.js applies and broadcasts;
-// its own UI goes through the very same path (sendToHost loops back). Images: bytes travel as MSG.imgData (net/images.js), snapshots carry refs.
+// Client: MSG.state (newer rev only) -> render. UI intents -> session.sendToHost(MSG.intent). Host: src/app/host.js applies and sends every
+// player their own redacted snapshot (stateFor: during play, other players' capture urls are null); its own UI goes through the very same
+// path (sendToHost loops back). A capture is the map's current URL (map.getUrl()); there are no images.
 import {
-  INTENT, MAX_PLAYERS, MSG, SESSION_EVENT, clockOffset, createInitialState, defaultProfile, makeId, makeRoomCode,
+  INTENT, MAX_PLAYERS, MSG, SESSION_EVENT, URL_MAX, clockOffset, createInitialState, defaultProfile, makeId, makeRoomCode,
 } from '../contracts.js';
 import { getPlayer } from '../core/index.js';
-import { createImageStore, createSession, loadIdentity, saveProfile } from '../net/index.js';
+import { isAllowedMapUrl } from '../../electron/allowlist.js';
+import { createSession, loadIdentity, saveProfile } from '../net/index.js';
 import { createMapPanel } from '../map/mapPanel.js';
 import { createLobbyScreen } from '../ui/lobby/lobbyScreen.js';
 import { createPlayScreen } from '../ui/play/playScreen.js';
@@ -27,6 +29,10 @@ const REJECT_TEXT = {
   started: 'That game has already started.',
   protocol: 'Version mismatch: you and the host run different versions of Geofinder.',
 };
+
+const isElectron = !!window.geofinder?.isElectron;
+/** A live map viewer (mode 'view') for the review screen and the chat-link overlay. */
+const createViewer = (container) => (isElectron ? createMapPanel(container, { mode: 'view' }) : createStubMap(container, { mode: 'view' }));
 
 export function startApp(root) {
   const params = new URLSearchParams(location.search);
@@ -77,7 +83,7 @@ export function startApp(root) {
   }
 
   // ---- one game ----
-  /** @type {null | { session:any, store:any, isHost:boolean, roomCode:string, state:any, rev:number, offset:number, host:any, map:any, offs:Function[] }} */
+  /** @type {null | { session:any, isHost:boolean, roomCode:string, state:any, rev:number, offset:number, host:any, map:any, offs:Function[] }} */
   let game = null;
 
   function begin(profile, isHost, roomCode) {
@@ -85,14 +91,10 @@ export function startApp(root) {
     identity.profile = profile;
     setNotice(null);
     const session = createSession({ roomCode, transport, profile, playerId: identity.playerId, isHost });
-    const store = createImageStore(session);
-    const g = (game = { session, store, isHost, roomCode, state: null, rev: -1, offset: 0, host: null, map: null, offs: [] });
+    const g = (game = { session, isHost, roomCode, state: null, rev: -1, offset: 0, host: null, map: null, offs: [] });
     const hostId = () => session.hostPlayerId();
 
-    g.offs.push(
-      store.onImage(() => renderNow()),
-      session.on(SESSION_EVENT.error, ({ message }) => console.error('[net]', message)),
-    );
+    g.offs.push(session.on(SESSION_EVENT.error, ({ message }) => console.error('[net]', message)));
     if (isHost) {
       g.host = createHost({
         session,
@@ -131,18 +133,7 @@ export function startApp(root) {
     g.rev = msg.rev;
     g.state = msg.state;
     g.offset = clockOffset(msg.now);
-    requestImages(g);
     renderNow();
-  }
-
-  /** Ask for every image the snapshot references and we do not hold (the store keeps its own schedule per id), and free held images
-   *  nothing references any more (replaced captures, trimmed chat, earlier rounds). The store spares images younger than 10 s. */
-  function requestImages(g) {
-    const refs = [];
-    for (const byPlayer of Object.values(g.state.captures)) for (const c of Object.values(byPlayer)) refs.push({ imageId: c.captureId, ownerId: c.playerId });
-    for (const m of g.state.chat) if (m.imageId) refs.push({ imageId: m.imageId, ownerId: m.playerId });
-    g.store.requestMissing(refs);   // always the complete set, also when empty: the store forgets wanted ids that vanished
-    g.store.retainOnly(new Set(refs.map((r) => r.imageId)));
   }
 
   function renderNow() {
@@ -154,9 +145,7 @@ export function startApp(root) {
     roomEl.textContent = state.roomCode;
     countEl.textContent = `${state.players.filter((p) => p.connected).length}/${MAX_PLAYERS} players`;
     header.hidden = false;
-    entry.screen.render({
-      state, meId: identity.playerId, clockOffset: g.offset, imageUrl: (id) => g.store.objectUrl(id),
-    });
+    entry.screen.render({ state, meId: identity.playerId, clockOffset: g.offset });
   }
 
   function ensureScreen(g, phase) {
@@ -166,39 +155,30 @@ export function startApp(root) {
       case 'play': return mount('play', () => {
         g.map = createMap(g);
         return createPlayScreen({
-          send, map: g.map,
-          onCapture: async (categoryId) => {
-            const captureId = await shipImage(g, { kind: 'capture', categoryId });
-            send({ type: INTENT.capture, captureId, categoryId });
-          },
-          onShare: async (caption) => {
-            const imageId = await shipImage(g, { kind: 'chat' });
-            send({ type: INTENT.chatImage, id: makeId(), imageId, ...(caption ? { text: caption } : {}) });
-          },
+          send, map: g.map, createViewer,
+          onCapture: async (categoryId) => send({ type: INTENT.capture, captureId: makeId(), categoryId, url: currentMapUrl(g) }),
+          onShare: async (caption) => send({ type: INTENT.chatLink, id: makeId(), url: currentMapUrl(g), ...(caption ? { text: caption } : {}) }),
         });
-      }, () => { g.map = null; });
-      case 'review': return mount('review', () => createReviewScreen({ send }));
+      }, () => { g.map?.destroy(); g.map = null; });
+      case 'review': return mount('review', () => createReviewScreen({ send, createViewer }));
       case 'results': return mount('results', () => createResultsScreen({ send }));
       default: return null;
     }
   }
 
-  /** Real webview map inside Electron, canvas stub in a plain browser. Both: { element, show, capture }. */
+  /** Real webview map inside Electron, stub in a plain browser. Both: { element, show, load, getUrl, destroy }. */
   function createMap(g) {
-    if (window.geofinder?.captureMap) return createMapPanel(document.createElement('div')); // the play screen re-parents .element once
-    const me = getPlayer(g.state, identity.playerId)?.profile;
-    return createStubMap({ name: me?.name, color: me?.color });
+    const container = document.createElement('div');   // the play screen re-parents .element once
+    if (isElectron) return createMapPanel(container);
+    return createStubMap(container, { seed: getPlayer(g.state, identity.playerId)?.profile.name });
   }
 
-  /** Capture the map and broadcast the JPEG (MSG.imgData). Resolves with the new imageId; the caller then sends the small intent. */
-  async function shipImage(g, meta) {
-    if (!g.map) throw new Error('the map is not ready');
-    const blob = await g.map.capture();
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    if (g !== game) throw new Error('you left the room');
-    const imageId = makeId();
-    g.store.sendImage(bytes, { ...meta, imageId });
-    return imageId;
+  /** The map's current URL, or a clear error (the screen toasts it) when there is none yet or it is not one core would accept. */
+  function currentMapUrl(g) {
+    const url = g.map?.getUrl();
+    if (!url) throw new Error('the map has not finished loading yet');
+    if (url.length > URL_MAX || !isAllowedMapUrl(url)) throw new Error('this page cannot be submitted, go back to the map first');
+    return url;
   }
 
   // ---- leaving ----
@@ -208,7 +188,6 @@ export function startApp(root) {
     game = null;
     g.host?.stop();
     for (const off of g.offs) off();
-    g.store.dispose();
     g.session.leave();
   }
   function endGame(text) { teardown(); showProfile(text); }
@@ -223,7 +202,7 @@ export function startApp(root) {
   window.addEventListener('pagehide', () => game?.session.leave()); // tell the others at once instead of making them time us out
 
   // test/debug hook
-  window.__gf = { getState: () => game?.state ?? null, getSession: () => game?.session ?? null, getStore: () => game?.store ?? null, identity };
+  window.__gf = { getState: () => game?.state ?? null, getSession: () => game?.session ?? null, identity };
 
   showProfile(null);
 }

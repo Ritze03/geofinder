@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { MSG, SESSION_EVENT, KEYS, PROTOCOL_VERSION, IMAGE_MAX_BYTES, defaultProfile } from '../contracts.js';
+import { MSG, SESSION_EVENT, KEYS, PROTOCOL_VERSION, defaultProfile } from '../contracts.js';
 import { createSession } from './session.js';
 import { createTransport as createLocal } from './transports/local.js';
 import { loadIdentity, saveProfile } from './identity.js';
@@ -22,7 +22,7 @@ function make(roomCode, name, isHost = false, transport = 'local') {
   open.push(s);
   return s;
 }
-const record = (s, type) => { const got = []; s.on(type, (data, from, metadata) => got.push(metadata === undefined ? { data, from } : { data, from, metadata })); return got; };
+const record = (s, type) => { const got = []; s.on(type, (data, from) => got.push({ data, from })); return got; };
 after(() => { for (const s of open) s.leave(); });
 
 test('host + 2 clients exchange hello, clients learn the host', async () => {
@@ -294,11 +294,6 @@ test('a silent host (tab killed, no clean leave) is detected as gone, and back w
 });
 
 
-// ---------------------------------------------------------------------------------------------------------------------------------------
-// binary + metadata
-const jpeg = (n, fill = 7) => new Uint8Array(n).fill(fill);
-const META = { kind: 'capture', imageId: 'img1', ownerId: 'alice', categoryId: 'cat1', at: 123, mime: 'image/jpeg', w: 1280, h: 720 };
-
 test('hello carries protocol/playerId/profile/isHost (no isBot) and sanitizes the profile', async () => {
   const g = roomOf();
   const host = make(g, 'host', true);
@@ -312,72 +307,7 @@ test('hello carries protocol/playerId/profile/isHost (no isBot) and sanitizes th
   assert.deepEqual(info.profile, { name: 'A very long na', color: 'coral', head: 'round', face: 'happy' });
 });
 
-test('binary send/broadcast carries bytes + metadata intact; a Uint8Array arrives as an ArrayBuffer usable for a Blob', async () => {
-  const g = roomOf();
-  const host = make(g, 'host', true), a = make(g, 'alice'), b = make(g, 'bob');
-  await until(() => a.hostPlayerId() && b.hostPlayerId() && host.peers().length === 2 && a.peers().length === 2);
-  const atHost = record(host, MSG.imgData), atB = record(b, MSG.imgData);
-
-  // a VIEW into a bigger buffer: only its own bytes may travel
-  const big = new Uint8Array(64).fill(1);
-  const view = new Uint8Array(big.buffer, 8, 16).fill(9);
-  a.broadcast(MSG.imgData, view, { metadata: META });
-  await until(() => atHost.length === 1 && atB.length === 1);
-  for (const got of [atHost[0], atB[0]]) {
-    assert.equal(got.from, 'alice');
-    assert.deepEqual(got.metadata, META);
-    assert.ok(got.data instanceof ArrayBuffer, 'receivers get a plain ArrayBuffer');
-    assert.deepEqual([...new Uint8Array(got.data)], new Array(16).fill(9));
-    assert.equal(new Blob([got.data], { type: 'image/jpeg' }).size, 16);
-  }
-
-  // targeted send + ArrayBuffer payload + sendToHost
-  const atB2 = record(b, MSG.imgData), atHost2 = record(host, MSG.imgData);
-  atHost2.length = 0;
-  host.send(MSG.imgData, jpeg(10, 5).buffer, 'bob', { metadata: { ...META, imageId: 'img2' } });
-  await until(() => atB2.length === 1);
-  assert.equal(atB2[0].metadata.imageId, 'img2');
-  assert.equal(atB2[0].data.byteLength, 10);
-  b.sendToHost(MSG.imgData, jpeg(3), { metadata: { n: 1 } });
-  await until(() => atHost2.length === 1);
-  assert.deepEqual(atHost2[0].metadata, { n: 1 });
-  assert.equal(atHost2[0].from, 'bob');
-});
-
-test('metadata is also looped back with broadcast {self:true} and a host sendToHost', async () => {
-  const host = make(roomOf(), 'host', true);
-  const got = record(host, MSG.imgData);
-  host.broadcast(MSG.imgData, jpeg(4), { self: true, metadata: META });
-  host.sendToHost(MSG.imgData, jpeg(2), { metadata: { x: 1 } });
-  await until(() => got.length === 2);
-  assert.deepEqual(got.map((x) => x.metadata).sort((p, q) => (p.x ? -1 : 1)), [{ x: 1 }, META]);
-});
-
-test('json messages without metadata arrive with metadata undefined', async () => {
-  const g = roomOf();
-  const host = make(g, 'host', true), a = make(g, 'alice');
-  await until(() => a.hostPlayerId());
-  let seen = 'unset';
-  a.on(MSG.state, (d, from, metadata) => { seen = metadata; });
-  host.broadcast(MSG.state, { rev: 1 });
-  await until(() => seen !== 'unset');
-  assert.equal(seen, undefined);
-});
-
-test('oversize binary payloads are dropped by the receiving session, a valid one right after still arrives', async () => {
-  const g = roomOf();
-  const host = make(g, 'host', true), a = make(g, 'alice');
-  await until(() => a.hostPlayerId() && host.peers().length === 1);
-  const got = record(host, MSG.imgData);
-  a.broadcast(MSG.imgData, jpeg(IMAGE_MAX_BYTES + 1), { metadata: { ...META, imageId: 'big' } });
-  a.broadcast(MSG.imgData, jpeg(IMAGE_MAX_BYTES), { metadata: { ...META, imageId: 'max' } });
-  await until(() => got.length >= 1);
-  await wait(200);
-  assert.deepEqual(got.map((x) => x.metadata.imageId), ['max']);
-  assert.equal(got[0].data.byteLength, IMAGE_MAX_BYTES);
-});
-
-test('rejoin by playerId: binary addressed to that playerId reaches the new connection', async () => {
+test('rejoin by playerId: a message addressed to that playerId reaches the new connection', async () => {
   const g = roomOf();
   const host = make(g, 'host', true);
   const joins = record(host, SESSION_EVENT.peerJoin), left = record(host, SESSION_EVENT.peerLeave);
@@ -385,28 +315,25 @@ test('rejoin by playerId: binary addressed to that playerId reaches the new conn
   await until(() => joins.length === 1);
   a1.leave();
   await until(() => left.length === 1);
-  host.send(MSG.imgData, jpeg(5), 'alice', { metadata: META });   // nobody to deliver to: silently ignored
+  host.send(MSG.state, { rev: 1 }, 'alice');   // nobody to deliver to: silently ignored
 
   const a2 = make(g, 'alice');
-  const atA2 = record(a2, MSG.imgData);
+  const atA2 = record(a2, MSG.state);
   await until(() => joins.length === 2 && a2.hostPlayerId() === 'host');
-  host.send(MSG.imgData, jpeg(6), 'alice', { metadata: { ...META, imageId: 'img9' } });
+  host.send(MSG.state, { rev: 2 }, 'alice');
   await until(() => atA2.length === 1);
-  assert.equal(atA2[0].metadata.imageId, 'img9');
-  assert.equal(atA2[0].from, 'host');
+  assert.deepEqual(atA2[0], { data: { rev: 2 }, from: 'host' });
 });
 
-test('transport mock: session hands send(type, data, target, metadata) through and forwards onMessage metadata', () => {
+test('transport mock: session hands send(type, data, target) through and registers every MSG type plus hb', () => {
   const sent = [], handlers = new Map();
   const link = {
     selfId: 'me', send: (...a) => sent.push(a), onMessage: (t, h) => handlers.set(t, h), onPeerJoin() {}, onPeerLeave() {}, ping: async () => 0, leave() {},
   };
   const s = createSession({ roomCode: 'GEO-MOCK', transport: link, profile: defaultProfile(), playerId: 'me', isHost: false });
   open.push(s);
-  s.broadcast(MSG.imgData, jpeg(2), { metadata: { m: 1 } });
-  const call = sent.find((a) => a[0] === MSG.imgData);
-  assert.deepEqual([call[0], call[1].byteLength, call[2], call[3]], [MSG.imgData, 2, undefined, { m: 1 }]);
-  // all MSG types + hb are registered (imgData / imgRequest come along)
+  s.broadcast(MSG.state, { rev: 1 });
+  assert.deepEqual(sent.find((a) => a[0] === MSG.state), [MSG.state, { rev: 1 }]);
   assert.deepEqual([...handlers.keys()].sort(), [...Object.values(MSG), 'hb'].sort());
   for (const k of handlers.keys()) assert.ok(new TextEncoder().encode(k).length <= 32);
 });

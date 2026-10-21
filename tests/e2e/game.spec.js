@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { createRoom, expectLoadedBlobImage, joinRoom, openPlayer, playerIdOf } from './helpers.js';
+import { createRoom, joinRoom, openPlayer, playerIdOf, stateOf, urlOf } from './helpers.js';
 
 // The plan's acceptance criterion, one explicit assertion per clause: three players over ?local play a whole game.
 const DONE_COUNTDOWN_MS = 60_000;
 
-test('3 players play a full game: lobby gate, image transfer, done countdown, ratings = results', async ({ context }) => {
+test('3 players play a full game: lobby gate, links instead of screenshots, done countdown, ratings = results', async ({ context }) => {
   const errors = [];
   const [host, c1, c2] = [
     await openPlayer(context, errors, 'host', 'h'),
@@ -64,49 +64,98 @@ test('3 players play a full game: lobby gate, image transfer, done countdown, ra
   for (const p of pages) await expect(p.locator('[data-screen=play]')).toBeVisible();
   for (const p of pages) await expect(p.locator('[data-stub-map]')).toHaveCount(1); // browser mode runs on the stub map
 
-  // ---- 3. captures and a chat share arrive at the other players as decoded images ----
-  const capture = async (p, catId) => {
+  // ---- 3. captures are links: no peeking during play, own spot is restorable, chat links open a live viewer ----
+  // Browser mode runs on the stub map: its "position" is a Google Maps URL ([data-url]) that moves with every click on it.
+  const mapOf = (p) => p.locator('.play-s .map > .map-panel');
+  const moveMap = async (p) => {
+    const before = await urlOf(mapOf(p));
+    await mapOf(p).locator('.map-view').click();
+    await expect(mapOf(p)).not.toHaveAttribute('data-url', before);
+  };
+  /** move the map, then "Submit this spot" for catId; returns the url that was on the map at that moment */
+  const submit = async (p, pid, catId) => {
+    await moveMap(p);
+    const url = await urlOf(mapOf(p));
     const row = p.locator(`li[data-id="${catId}"]`);
     await row.locator('.cap').click();
-    await expect(row).toHaveClass(/done/); // the snapshot carries my new ref
-    await expect(row.locator('.th img')).toHaveAttribute('src', /^blob:/);
+    await expect(row).toHaveClass(/done/); // the snapshot carries my ref
+    await expect.poll(async () => (await stateOf(p)).captures[catId][pid].url, { message: 'my own capture carries exactly the submitted url' }).toBe(url);
+    return url;
   };
-  await capture(host, 'cat1');
-  await capture(c1, 'cat1');
-  await capture(c2, 'cat1');
-  await capture(host, 'cat2');
-  await capture(c1, 'cat2'); // c2 deliberately skips cat2
+  const submitted = { cat1: {}, cat2: {} }; // catId -> playerId -> url
+  submitted.cat1[hid] = await submit(host, hid, 'cat1');
+  submitted.cat1[id1] = await submit(c1, id1, 'cat1');
+  submitted.cat1[id2] = await submit(c2, id2, 'cat1');
+  submitted.cat2[hid] = await submit(host, hid, 'cat2');
+  submitted.cat2[id1] = await submit(c1, id1, 'cat2'); // c2 deliberately skips cat2
+  const allUrls = [...Object.values(submitted.cat1), ...Object.values(submitted.cat2)];
+  expect(new Set(allUrls).size, 'every submission is a different spot').toBe(allUrls.length);
 
-  for (const [viewer, others] of [[host, [1, 2]], [c1, [0, 2]], [c2, [0, 1]]]) {
-    const row = viewer.locator('li[data-id="cat1"]');
-    await expect(row.locator('.oth button')).toHaveCount(2);
-    for (const i of others) {
-      // open the other player's capture in the lightbox: a blob: <img> that decoded
-      await row.locator(`.oth button[title="${NAMES[i]}'s capture"]`).click();
-      const modal = viewer.locator('.modal:not([hidden])');
-      await expect(modal.locator('figure figcaption b').first()).toHaveText(NAMES[i]);
-      await expectLoadedBlobImage(modal.locator('figure img').first());
-      await modal.locator('[data-close]').click();
-      await expect(viewer.locator('.modal:not([hidden])')).toHaveCount(0);
+  // (a) NO PEEKING: while the game runs, a page holds no url of anybody else's capture, neither in its state nor on screen
+  for (const [p, me] of [[host, hid], [c1, id1], [c2, id2]]) {
+    await expect(p.locator('li[data-id="cat1"] .stat')).toContainText('3 of 3 found it'); // refs (counts) are public, urls are not
+    const state = await stateOf(p);
+    for (const [catId, byPlayer] of Object.entries(state.captures)) {
+      for (const [pid, ref] of Object.entries(byPlayer)) {
+        if (pid === me) expect(ref.url, `${catId}: my own url`).toBe(submitted[catId][me]);
+        else expect(ref.url, `${catId}: ${pid}'s url as seen by ${me}`).toBeNull();
+      }
     }
+    const html = await p.evaluate(() => `${document.documentElement.outerHTML}\n${document.body.innerText}`);
+    const json = JSON.stringify(state);
+    for (const [catId, byPlayer] of Object.entries(submitted)) {
+      for (const [pid, url] of Object.entries(byPlayer)) {
+        if (pid === me) continue;
+        expect(html.includes(url), `${catId}: ${pid}'s url is in ${me}'s DOM`).toBe(false);
+        expect(json.includes(url), `${catId}: ${pid}'s url is in ${me}'s state`).toBe(false);
+      }
+    }
+    // and nothing clickable that would open somebody else's submission
+    await expect(p.locator('.play-s .oth, .modal:not([hidden]), .vw')).toHaveCount(0);
   }
-  // cat2: c2 sees host + c1 captures too, and cat2 has no c2 capture of its own
-  await expect(c2.locator('li[data-id="cat2"] .oth button')).toHaveCount(2);
+  // cat2: c2 sees the count but has no capture of its own
+  await expect(c2.locator('li[data-id="cat2"] .stat')).toContainText('2 of 3 found it');
   await expect(c2.locator('li[data-id="cat2"]')).not.toHaveClass(/done/);
 
-  // chat share ("Share screen") with a caption, then a bare one from c2
+  // "Go to my spot" puts the map back on my own submission
+  await moveMap(host);
+  expect(await urlOf(mapOf(host))).not.toBe(submitted.cat1[hid]);
+  await host.locator('li[data-id="cat1"] .go').click();
+  await expect(mapOf(host)).toHaveAttribute('data-url', submitted.cat1[hid]);
+
+  // (c) CHAT LINK: "Share this spot" with a caption, then a bare one from c2; the 📍 chip opens a live viewer on the shared url
+  const shared = {};
+  await moveMap(host);
+  shared.host = await urlOf(mapOf(host));
   await host.locator('.cin input').fill('look at this');
-  await host.getByRole('button', { name: 'Share screen' }).click();
+  await host.getByRole('button', { name: 'Share this spot' }).click();
+  for (const p of pages) await expect(p.locator('.msgs .msg', { hasText: 'look at this' })).toHaveCount(1);
+  await moveMap(c2);
+  shared.c2 = await urlOf(mapOf(c2));
+  await c2.getByRole('button', { name: 'Share this spot' }).click();
+  for (const p of pages) await expect(p.locator('.msgs .msg .spot')).toHaveCount(2);
+  expect(new Set([shared.host, shared.c2, ...allUrls]).size).toBe(allUrls.length + 2);
   for (const p of pages) {
-    const msg = p.locator('.msgs .msg', { hasText: 'look at this' });
-    await expect(msg).toHaveCount(1);
-    await expectLoadedBlobImage(msg.locator('img'));
+    const links = (await stateOf(p)).chat.map((m) => m.url).filter(Boolean).sort();
+    expect(links, 'chat links are never redacted').toEqual([shared.host, shared.c2].sort());
   }
-  await c2.getByRole('button', { name: 'Share screen' }).click();
-  for (const p of pages) {
-    await expect(p.locator('.msgs .msg img')).toHaveCount(2);
-    for (const img of await p.locator('.msgs .msg img').all()) await expectLoadedBlobImage(img);
+
+  for (const [p, from, name] of [[c1, 'host', NAMES[0]], [c2, 'host', NAMES[0]], [host, 'c2', NAMES[2]], [c1, 'c2', NAMES[2]]]) {
+    await p.locator('.msgs .msg', { hasText: name }).locator('.spot').click();
+    const viewer = p.locator('.vw .map-panel');
+    await expect(viewer).toHaveAttribute('data-url', shared[from]);
+    await expect(p.locator('.vw .map-bar')).toHaveCount(0); // a viewer has no provider bar
+    // look around in it, then "Back to shared spot" restores the link
+    await viewer.locator('.map-view').click();
+    await expect(viewer).not.toHaveAttribute('data-url', shared[from]);
+    await p.locator('.vw [data-back]').click();
+    await expect(viewer).toHaveAttribute('data-url', shared[from]);
+    await p.locator('.vw [data-close]').click();
+    await expect(p.locator('.vw')).toHaveCount(0);
   }
+  // opening a link never touched my own map
+  await expect(mapOf(host)).toHaveAttribute('data-url', shared.host);
+
   // plain chat text still works next to it
   await c1.locator('.cin input').fill('nice one');
   await c1.getByRole('button', { name: 'Send' }).click();
@@ -153,14 +202,34 @@ test('3 players play a full game: lobby gate, image transfer, done countdown, ra
   const CATS = 7;
   for (let ci = 0; ci < CATS; ci++) {
     for (const p of pages) await expect(p.locator('.rv-head .eyebrow')).toHaveText(`Category ${ci + 1} of ${CATS}`);
-    if (ci === 0) {
-      // the captures arrived as images on the review cards, too
+    const catId = `cat${ci + 1}`;
+    const viewerOf = (p) => p.locator('.rv-vbody .map-panel');
+    if (ci < 2) {
+      // (b) REVIEW SHOWS THE SUBMITTED SPOT: every page holds every url now; selecting a card loads exactly that url in the live viewer
+      const owners = Object.keys(submitted[catId]);
       for (const p of pages) {
-        await expect(p.locator('.rcard:not(.miss)')).toHaveCount(3);
-        for (const img of await p.locator('.rcard img').all()) await expectLoadedBlobImage(img);
+        await expect(p.locator('.rcard:not(.miss)')).toHaveCount(owners.length);
+        const state = await stateOf(p);
+        for (const pid of owners) expect(state.captures[catId][pid].url, `review state carries ${pid}'s url`).toBe(submitted[catId][pid]);
+        // a new category auto-selects the first submission (join order: host first)
+        await expect(viewerOf(p)).toHaveAttribute('data-url', submitted[catId][owners[0]]);
+        for (const pid of owners) {
+          await p.locator(`.rcard[data-pid="${pid}"] .pick`).click();
+          await expect(viewerOf(p)).toHaveAttribute('data-url', submitted[catId][pid]);
+        }
+        // wander off in the viewer, "Back to submitted spot" re-loads the selected submission
+        const last = submitted[catId][owners.at(-1)];
+        await viewerOf(p).locator('.map-view').click();
+        await expect(viewerOf(p)).not.toHaveAttribute('data-url', last);
+        await p.locator('.rv-back').click();
+        await expect(viewerOf(p)).toHaveAttribute('data-url', last);
+        await expect(p.locator('.rv-vbody .map-bar')).toHaveCount(0);
       }
     }
-    if (ci === 1) await expect(c2.locator(`.rcard[data-pid="${id2}"]`)).toHaveClass(/miss/); // c2 skipped cat2
+    if (ci === 1) {
+      await expect(c2.locator(`.rcard[data-pid="${id2}"]`)).toHaveClass(/miss/); // c2 skipped cat2
+      await expect(c2.locator(`.rcard[data-pid="${id2}"] .pick`)).toBeDisabled();
+    }
     for (const [rater, target, stars] of RATINGS[ci] ?? []) await rate(pages[rater], target, stars);
     if (ci < CATS - 1) await host.getByRole('button', { name: 'Next category →' }).click();
   }

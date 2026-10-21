@@ -1,6 +1,6 @@
 // Lobby screen. Renders a GameState snapshot, never changes state itself: every action is send({ type: INTENT.x, ... }).
 //   createLobbyScreen({ send, onLeave? }) -> { el, render(view), destroy() }
-//   view = { state, meId, clockOffset, imageUrl }
+//   view = { state, meId, clockOffset }
 // D9: no countdown. Everyone (host included) toggles Ready; the host's Start enables via canStart(state).
 // The skeleton is built once and render() patches it, so typed text / focus / the slider survive every snapshot.
 import {

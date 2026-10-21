@@ -45,8 +45,5 @@ export async function joinRoom(page, name, code) {
 export const playerIdOf = (page) => page.evaluate(() => window.__gf.identity.playerId);
 export const stateOf = (page) => page.evaluate(() => window.__gf.getState());
 
-/** An <img> inside `locator` carries a blob: URL and has actually decoded (naturalWidth > 0): the bytes really arrived. */
-export async function expectLoadedBlobImage(locator) {
-  await expect(locator).toHaveAttribute('src', /^blob:/);
-  await expect.poll(() => locator.evaluate((img) => img.complete && img.naturalWidth > 0), { message: 'image decoded' }).toBe(true);
-}
+/** The URL a stub map (play map or viewer) currently shows: the data-url of its .map-panel locator. */
+export const urlOf = (panel) => panel.getAttribute('data-url');

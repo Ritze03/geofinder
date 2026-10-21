@@ -1,64 +1,79 @@
-// Stub map for plain browsers (e2e, `vite preview`): same shape as createMapPanel() -> { element, show, capture }.
-// A canvas-drawn "street scene" that differs per provider and carries the player's name, so captures are real JPEG bytes
-// that differ per player / provider / moment. Markup mirrors the real panel: .map-panel > .map-bar + .map-view.
+// Stub map for plain browsers (e2e, `vite preview`): same API as createMapPanel() -> { element, show, load, getUrl, destroy }.
+// No real map: a plain panel whose "position" is a Google Maps URL (always isAllowedMapUrl-valid, so core accepts it). The position
+// starts at a spot derived from `seed` (the player name) and moves a step on every click on the view, like panning would. getUrl()
+// returns the current position; load(url) adopts any url and shows its text. The shown url is also in [data-url] (on the panel), so
+// tests can read it. Markup mirrors the real panel: .map-panel > (.map-bar +) .map-view. A 'view' stub has no bar.
 import '../map/mapPanel.css';
-import { colorHex } from '../ui/kit/index.js';
 
-const W = 960;
-const H = 600;
 const PROVIDERS = { google: 'Google Maps', apple: 'Apple Maps' };
+const POS = /@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/;
 
-/** @param {{ name?:string, color?:string }} [who]  player name + colour id, drawn into the scene */
-export function createStubMap({ name = 'Player', color = 'coral' } = {}) {
+const hash = (s) => {
+  let n = 7;
+  for (const ch of String(s)) n = Math.imul(n ^ ch.charCodeAt(0), 2654435761) >>> 0;
+  return n;
+};
+
+/** @param {HTMLElement} container  @param {{ mode?:'play'|'view', seed?:string }} [o] */
+export function createStubMap(container, { mode = 'play', seed = 'player' } = {}) {
+  const h = hash(seed);
   let provider = 'google';
-  let shots = 0;
+  let lat = 40 + (h % 100000) / 10000;
+  let lng = 5 + ((h >>> 8) % 100000) / 10000;   // somewhere in Europe, unique per seed
+  let url = null;
+  let clicks = 0;
+
+  const home = () => (provider === 'apple'
+    ? `https://maps.apple.com/frame?z=17&center=${lat.toFixed(6)}%2C${lng.toFixed(6)}`
+    : `https://www.google.com/maps/@${lat.toFixed(6)},${lng.toFixed(6)},15z`);
 
   const element = document.createElement('div');
-  element.className = 'map-panel';
-  element.dataset.stubMap = '';
-  const bar = document.createElement('div');
-  bar.className = 'map-bar';
-  bar.textContent = 'Stub map (browser mode)';
+  element.className = mode === 'view' ? 'map-panel map-panel-view' : 'map-panel';
+  element.dataset.stubMap = mode;
   const view = document.createElement('div');
   view.className = 'map-view';
-  view.style.cssText = 'position:relative;overflow:hidden;background:#13131e';
-  const canvas = document.createElement('canvas');
-  canvas.width = W;
-  canvas.height = H;
-  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain';
-  view.append(canvas);
-  element.append(bar, view);
-
-  function draw() {
-    const g = canvas.getContext('2d');
-    const apple = provider === 'apple';
-    g.fillStyle = apple ? '#dfe9d2' : '#e8e0d0'; g.fillRect(0, 0, W, H);
-    g.fillStyle = apple ? '#9ed0e8' : '#aadaff'; g.fillRect(0, H * 0.62, W, H * 0.38);            // water
-    g.fillStyle = apple ? '#bcdba0' : '#c8e6b8'; g.fillRect(W * 0.08, H * 0.1, W * 0.3, H * 0.3); // park
-    g.strokeStyle = '#fdfdfd'; g.lineWidth = 14;
-    for (let i = 1; i < 6; i++) { g.beginPath(); g.moveTo(i * W / 6, 0); g.lineTo(i * W / 6 + (shots % 3) * 20, H * 0.62); g.stroke(); }
-    for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, i * H * 0.15); g.lineTo(W, i * H * 0.15 + 30); g.stroke(); }
-    g.fillStyle = colorHex(color); g.beginPath(); g.arc(W * 0.7, H * 0.3, 46, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#1b1428'; g.font = '700 54px system-ui, sans-serif';
-    g.fillText(name, 40, H - 70);
-    g.font = '600 26px system-ui, sans-serif';
-    g.fillText(`${PROVIDERS[provider]} (stub)  #${shots}  ${new Date().toLocaleTimeString()}`, 40, H - 30);
+  view.style.cssText = 'position:relative;flex:1;min-height:0;overflow:hidden;background:#1d2733;color:#dfe8f2;display:grid;place-content:center;gap:8px;text-align:center;padding:16px;font:600 14px system-ui,sans-serif;cursor:grab';
+  const title = document.createElement('div');
+  const urlEl = document.createElement('code');
+  urlEl.style.cssText = 'font:12px ui-monospace,monospace;overflow-wrap:anywhere;max-width:90ch;opacity:.85';
+  view.append(title, urlEl);
+  if (mode !== 'view') {
+    const bar = document.createElement('div');
+    bar.className = 'map-bar';
+    bar.textContent = 'Stub map (browser mode)';
+    element.append(bar);
   }
-  draw();
+  element.append(view);
+  container.append(element);
+
+  function set(next) {
+    url = next;
+    element.dataset.url = url;
+    urlEl.textContent = url;
+    title.textContent = `${PROVIDERS[provider]} (stub, ${mode})`;
+  }
+  set(home());
+
+  // a click "pans": the position moves a little, so a later getUrl() differs from an earlier one
+  const onClick = () => {
+    const m = POS.exec(url);
+    if (m) { lat = +m[1]; lng = +m[2]; }
+    clicks++;   // the step grows with every click, so moving back and forth never lands on an earlier spot
+    lat += 0.0013 + clicks * 0.00001;
+    lng += 0.0017 + clicks * 0.00002;
+    set(home());
+  };
+  view.addEventListener('click', onClick);
 
   return {
     element,
     show(p) {
       if (!PROVIDERS[p]) throw new Error(`unknown map provider: ${p}`);
       provider = p;
-      draw();
+      set(home());
     },
-    /** Real JPEG Blob of the current scene (what the real panel's capture() also returns). */
-    capture() {
-      shots++;
-      draw();
-      return new Promise((resolve, reject) => canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob failed'))), 'image/jpeg', 0.8));
-    },
+    load(next) { set(next); },
+    getUrl: () => url,
+    destroy() { view.removeEventListener('click', onClick); element.remove(); },
   };
 }

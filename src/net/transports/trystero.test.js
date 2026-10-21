@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInitialState, makeId, CHAT_HISTORY_MAX, CHAT_TEXT_MAX, MAX_CATEGORIES, MAX_PLAYERS, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, STARS_MAX } from '../../contracts.js';
+import { createInitialState, makeId, URL_MAX, CHAT_HISTORY_MAX, CHAT_TEXT_MAX, MAX_CATEGORIES, MAX_PLAYERS, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, STARS_MAX } from '../../contracts.js';
 import { JSON_MAX_BYTES } from './trystero.js';
 
 const uuid = () => crypto.randomUUID();
+/** longest legal url (URL_MAX chars); every capture and every chat message carries one in the worst case */
+const LONG_URL = 'https://www.google.com/maps/@48.7784234,9.1799782,3a/data='.padEnd(URL_MAX, 'x');
 
 /** worst legal snapshot: full room, all categories captured and rated by everybody, a full chat of maximum-width (3-byte) characters */
 function worstCase(ch = '字') {
@@ -15,11 +17,11 @@ function worstCase(ch = '字') {
   for (const c of s.categories) {
     s.captures[c.id] = {}; s.ratings[c.id] = {};
     for (const p of ids) {
-      s.captures[c.id][p] = { captureId: makeId(), playerId: p, categoryId: c.id, at: Date.now() };
+      s.captures[c.id][p] = { captureId: makeId(), playerId: p, categoryId: c.id, at: Date.now(), url: LONG_URL };
       s.ratings[c.id][p] = Object.fromEntries(ids.filter((r) => r !== p).map((r) => [r, STARS_MAX]));
     }
   }
-  s.chat = Array.from({ length: CHAT_HISTORY_MAX }, () => ({ id: makeId(), playerId: ids[1], at: Date.now(), text: ch.repeat(CHAT_TEXT_MAX), imageId: makeId() }));
+  s.chat = Array.from({ length: CHAT_HISTORY_MAX }, () => ({ id: makeId(), playerId: ids[1], at: Date.now(), text: ch.repeat(CHAT_TEXT_MAX), url: LONG_URL }));
   return { rev: 99999, now: Date.now(), state: s };
 }
 

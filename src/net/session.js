@@ -1,12 +1,12 @@
 // Session: playerId layer on top of a Transport (contracts section 5). Knows peers by playerId, stamps `from`, tracks who the host is.
-// Ported from walters-knaggertreff; changes: gameId -> roomCode, no isBot, hello profile is sanitized, `metadata` (binary actions) plumbed through.
+// Ported from walters-knaggertreff; changes: gameId -> roomCode, no isBot, hello profile is sanitized.
 //
 // Seat limit (MAX_PLAYERS): NOT enforced here. The session is a pure transport layer and cannot know which seats are taken (a disconnected
 // player keeps its seat from 'play' on). The host's core/driver answers a 9th join with ERR.full / MSG.reject {reason:'full'}.
 //
 // Host leaving ends the game in v1 (D12): clients get SESSION_EVENT.hostGone and the app goes back to the start screen. `hostBack` is still
 // emitted (also once on the FIRST host hello of a normal join, and when a muted host speaks again); the app ignores it, no host resume in v1.
-import { MSG, SESSION_EVENT, PROTOCOL_VERSION, IMAGE_MAX_BYTES, SYSTEM, sanitizeProfile } from '../contracts.js';
+import { MSG, SESSION_EVENT, PROTOCOL_VERSION, SYSTEM, sanitizeProfile } from '../contracts.js';
 import { createTransport as createLocal } from './transports/local.js';
 import { createTransport as createTrystero } from './transports/trystero.js';
 
@@ -18,9 +18,6 @@ const HB = 'hb';                    // session-internal action, not part of MSG
 // Not strictly a UUID so that the unit tests can keep readable ids ('alice').
 const VALID_ID = /^[A-Za-z0-9-]{1,64}$/;
 const validId = (id) => typeof id === 'string' && id !== SYSTEM && VALID_ID.test(id);
-
-/** byte size of a binary payload, or -1 for anything that is not binary (JSON values) */
-const binarySize = (d) => (d instanceof ArrayBuffer || ArrayBuffer.isView(d) ? d.byteLength : typeof Blob !== 'undefined' && d instanceof Blob ? d.size : -1);
 
 /** @param {import('../contracts.js').SessionOptions & { transport: ('trystero'|'local'|object) }} o
  *  `transport` may also be a ready-made Transport object (tests wrap one to simulate a dead peer). */
@@ -34,9 +31,9 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
   let hostPeerId = null;        // clients only: peerId of the peer that announced isHost:true
   let closed = false;
 
-  const emit = (type, data, from, metadata) => {
+  const emit = (type, data, from) => {
     for (const h of [...(handlers.get(type) ?? [])]) {
-      try { h(data, from, metadata); } catch (e) { console.error(`[net] handler for "${type}" threw`, e); }
+      try { h(data, from); } catch (e) { console.error(`[net] handler for "${type}" threw`, e); }
     }
   };
 
@@ -107,18 +104,17 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
     if (answered) sendHello(peerId, false);
   }
 
-  function onInbound(type, data, peerId, metadata) {
+  function onInbound(type, data, peerId) {
     if (closed) return;
     let p = peers.get(peerId);
     if (!p) { p = touch(peerId); sendHello(peerId); }   // a peer we dropped (or never saw join) is talking: introduce ourselves again
     else p.lastSeen = Date.now();
     if (type === MSG.hello) return onHello(peerId, p, data);
     if (type === HB || !p.info) return;                 // messages before hello have no known sender
-    if (binarySize(data) > IMAGE_MAX_BYTES) return;     // oversize binary payload (D11): dropped, never reaches a handler
-    emit(type, data, p.info.playerId, metadata);
+    emit(type, data, p.info.playerId);
   }
 
-  for (const type of types) link.onMessage(type, (data, peerId, metadata) => onInbound(type, data, peerId, metadata));
+  for (const type of types) link.onMessage(type, (data, peerId) => onInbound(type, data, peerId));
   link.onPeerJoin((peerId) => { if (!closed) { touch(peerId); sendHello(peerId); } });
   link.onPeerLeave(dropPeer);
   link.onError?.((e) => emit(SESSION_EVENT.error, { message: String(e?.message ?? e) }, playerId));
@@ -130,9 +126,9 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
     for (const [peerId, p] of peers) if (p.pending) onHello(peerId, p, p.pending);   // refused earlier: maybe the seat / host slot is free now
   }, HEARTBEAT_MS);
 
-  const sendToHost = (type, data, { metadata } = {}) => {
-    if (isHost) queueMicrotask(() => { if (!closed) emit(type, data, playerId, metadata); });
-    else if (hostPeerId) link.send(type, data, hostPeerId, metadata);
+  const sendToHost = (type, data) => {
+    if (isHost) queueMicrotask(() => { if (!closed) emit(type, data, playerId); });
+    else if (hostPeerId) link.send(type, data, hostPeerId);
   };
 
   return {
@@ -143,14 +139,14 @@ export function createSession({ roomCode, transport, profile, playerId, isHost }
     hostPlayerId: () => (isHost ? playerId : (peers.get(hostPeerId)?.info.playerId ?? null)),
     peers: () => [...peers.values()].filter((p) => p.info).map((p) => ({ ...p.info })),
     sendIntent: (intent) => sendToHost(MSG.intent, { intent }),
-    send(type, data, toPlayerId, { metadata } = {}) {
+    send(type, data, toPlayerId) {
       const peerId = peerOf.get(toPlayerId);
-      if (peerId) link.send(type, data, peerId, metadata);
+      if (peerId) link.send(type, data, peerId);
     },
     sendToHost,
-    broadcast(type, data, { self = false, metadata } = {}) {
-      link.send(type, data, undefined, metadata);
-      if (self) queueMicrotask(() => { if (!closed) emit(type, data, playerId, metadata); });
+    broadcast(type, data, { self = false } = {}) {
+      link.send(type, data);
+      if (self) queueMicrotask(() => { if (!closed) emit(type, data, playerId); });
     },
     on(type, handler) {
       if (!handlers.has(type)) handlers.set(type, new Set());

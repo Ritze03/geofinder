@@ -16,6 +16,7 @@ if (new URLSearchParams(location.search).has('maponly')) {
   mapHost.style.cssText = 'flex:1;min-height:0'
   root.append(title, mapHost)
   window.mapPanel = createMapPanel(mapHost)
+  window.createMapPanel = createMapPanel   // tests build extra panels (view mode, several at once)
 } else {
   startApp(root)
 }

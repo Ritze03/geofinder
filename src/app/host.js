@@ -3,20 +3,21 @@
 //   host.stop()
 // Wiring: hello (SESSION_EVENT.peerJoin) -> HOST_INTENT.join (+ MSG.reject on full / started / protocol), peerLeave -> HOST_INTENT.leave,
 // MSG.intent -> applyIntent(actor = the stamped sender), setInterval(HOST_TICK_MS) -> HOST_INTENT.tick. Every change
-// (result.state !== state) is broadcast as { rev, now, state } and handed to onState (the host's own UI); a (re)joining player
-// additionally gets the snapshot alone right away.
+// (result.state !== state) is sent to each connected player as their OWN snapshot { rev, now, state: stateFor(state, playerId) }
+// (during play other players' capture urls are nulled, so nobody can peek) and handed to onState (the host's own UI, also redacted
+// for the host); a (re)joining player additionally gets their snapshot alone right away. The authoritative `state` is never redacted.
 import { ERR, HOST_INTENT, HOST_TICK_MS, MSG, PROTOCOL_VERSION, SESSION_EVENT, SYSTEM } from '../contracts.js';
-import { applyIntent } from '../core/index.js';
+import { applyIntent, stateFor } from '../core/index.js';
 
 export function createHost({ session, state: initial, onState, onIntentError }) {
   let state = initial;
   let stopped = false;
 
-  const snapshot = (now = Date.now()) => ({ rev: state.rev, now, state });
+  const snapshot = (viewerId, now = Date.now()) => ({ rev: state.rev, now, state: stateFor(state, viewerId) });
   const publish = () => {
-    const msg = snapshot();
-    session.broadcast(MSG.state, msg);
-    onState(msg);
+    const now = Date.now();
+    for (const p of state.players) if (p.connected && p.playerId !== session.selfPlayerId) session.send(MSG.state, snapshot(p.playerId, now), p.playerId);
+    onState(snapshot(session.selfPlayerId, now));
   };
 
   /** applyIntent + broadcast on change. Returns the ERR code or null. */
@@ -37,7 +38,7 @@ export function createHost({ session, state: initial, onState, onIntentError }) 
       }
       const err = apply(SYSTEM, { type: HOST_INTENT.join, playerId: info.playerId, profile: info.profile });
       if (err === ERR.full || err === ERR.started) session.send(MSG.reject, { reason: err }, info.playerId);
-      else if (!err) session.send(MSG.state, snapshot(), info.playerId); // new seat or rejoin: bring them up to date at once
+      else if (!err) session.send(MSG.state, snapshot(info.playerId), info.playerId); // new seat or rejoin: bring them up to date at once
     }),
     session.on(SESSION_EVENT.peerLeave, ({ playerId }) => { if (playerId !== SYSTEM) apply(SYSTEM, { type: HOST_INTENT.leave, playerId }); }),
     session.on(MSG.intent, (data, from) => {

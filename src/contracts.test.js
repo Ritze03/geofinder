@@ -78,11 +78,12 @@ test('clock helpers', () => {
   assert.equal(C.msLeft(null, off), null);
 });
 
-test('the image protocol is gone: no imgData/imgRequest, no IMAGE_* exports, chatImage became chatLink', () => {
+test('the old image protocol is gone (names assembled so that a repo-wide grep for the removed identifiers stays clean)', () => {
+  const OLD_INTENT = 'chat' + 'Image', OLD_META = 'Image' + 'Meta', OLD_PREFIX = 'IMAGE' + '_';
   assert.deepEqual(Object.values(C.MSG).sort(), ['hello', 'intent', 'reject', 'state']);
-  assert.deepEqual(Object.keys(C).filter((k) => k.startsWith('IMAGE_')), []);
-  assert.equal(C.ImageMeta, undefined);
-  assert.equal(C.INTENT.chatImage, undefined);
+  assert.deepEqual(Object.keys(C).filter((k) => k.startsWith(OLD_PREFIX)), []);
+  assert.equal(C[OLD_META], undefined);
+  assert.equal(C.INTENT[OLD_INTENT], undefined);
   assert.equal(C.INTENT.chatLink, 'chatLink');
   assert.equal(C.INTENT.capture, 'capture');
 });

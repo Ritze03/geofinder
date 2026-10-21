@@ -523,14 +523,14 @@ describe('chat', () => {
     bad(s, 'p1', { type: INTENT.chatLink, id: 'm4', url: GURL, text: 5 }, ERR.invalid);
     bad(s, 'p1', { type: INTENT.chatLink, url: GURL }, ERR.invalid);   // missing id
   });
-  test('link: allowed in every phase; duplicate id ignored; the old chatImage intent is gone', () => {
+  test('link: allowed in every phase; duplicate id ignored; the old image-chat intent is gone', () => {
     for (const s0 of [lobby(2), play(2), review(), ok(review(), 'h', { type: INTENT.showResults })]) {
       const s = ok(s0, 'p1', { type: INTENT.chatLink, id: 'lk', url: GURL });
       assert.equal(s.chat.at(-1).url, GURL);
       const r = applyIntent(s, 'p1', { type: INTENT.chatLink, id: 'lk', url: APPLE_LA }, T0);
       assert.equal(r.state, s);
     }
-    bad(lobby(2), 'p1', { type: 'chatImage', id: 'm', imageId: 'i' }, ERR.invalid);
+    bad(lobby(2), 'p1', { type: 'chat' + 'Image', id: 'm', url: GURL }, ERR.invalid);
   });
   test('duplicate chat id is ignored', () => {
     const s = ok(lobby(2), 'p1', { type: INTENT.chatText, id: 'm1', text: 'a' });

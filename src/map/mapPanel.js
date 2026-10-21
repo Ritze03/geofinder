@@ -86,7 +86,11 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
   const webview = document.createElement('webview')
   webview.className = 'map-view'
   webview.setAttribute('partition', 'persist:maps') // remembers the Google cookie consent
-  webview.setAttribute('src', PROVIDERS.google.url)
+  // No src yet: a viewer is told to load() in the same tick it is created, and a src changed after the guest attached is ignored.
+  // The start page is set in a microtask unless load() got there first.
+  queueMicrotask(() => {
+    if (!webview.hasAttribute('src')) webview.setAttribute('src', PROVIDERS.google.url)
+  })
 
   element.append(...(bar ? [bar, webview] : [webview]))
   container.append(element)
@@ -103,11 +107,17 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
     webview.loadURL(p.url).catch(() => {}) // aborted/superseded loads are not errors here
   }
 
+  let ready = false // webview.getURL()/getWebContentsId()/loadURL() are not usable before dom-ready
+
+  let pending = null // load() before the first dom-ready: becomes the start page, and is re-applied once ready if that did not take
   function load(url) {
+    if (!ready) {
+      pending = url
+      webview.setAttribute('src', url)
+      return
+    }
     webview.loadURL(url).catch(() => {})
   }
-
-  let ready = false // webview.getURL()/getWebContentsId() throw before dom-ready
   function getUrl() {
     if (!ready) return null
     try {
@@ -154,6 +164,11 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
 
   const onDomReady = () => {
     ready = true
+    if (pending) {
+      const url = pending
+      pending = null
+      if (webview.getURL() !== url) webview.loadURL(url).catch(() => {})
+    }
     injectCss()
     maybeRejectConsent()
   }
