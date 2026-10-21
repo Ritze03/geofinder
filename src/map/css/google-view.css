@@ -1,0 +1,14 @@
+/* Google Maps, 'view' mode: keep only the canvas, zoom/compass and attribution. Injected by mapPanel.js. */
+/* role-based (most stable) */
+#gb, [role="search"], [role="navigation"], [role="region"], [role="menu"], [role="tooltip"], [role="alert"], [role="main"],
+/* left rail + place/search side panel: ancestors of the nav-rail <ul role=list> (structural :has, no class names) */
+div:has(> div > ul[role="list"]), div:has(> div > div > ul[role="list"]),
+/* minimap / layer-switcher tile (jsaction namespaces are fairly stable) */
+[jsaction*="minimap"], div:has(> [jsaction*="minimap"]),
+/* fragile obfuscated classes, observed Oct 2026 */
+.mYn9J /* SV Share + Close */, .PlF8V /* SV/other layer box */, .AbwhFc /* SV minimap */, .C5SiJf /* SV address card */, .XltNde /* side panel bg */
+{ display: none !important; }
+/* locale-dependent aria-labels (de + en) */
+button[aria-label="Deinen Standort anzeigen"], button[aria-label^="Street View-Bilder"], button[aria-label="Bilder anzeigen"],
+button[aria-label="Your location"], button[aria-label^="Show Street View"], button[aria-label="Show imagery"]
+{ display: none !important; }

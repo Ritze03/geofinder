@@ -1,8 +1,7 @@
-import { app, BrowserWindow, ipcMain, session, webContents } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isAllowedMapUrl } from './allowlist.js'
-import { IMAGE_MAX_WIDTH, IMAGE_JPEG_QUALITY } from '../src/contracts.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const MAPS_PARTITION = 'persist:maps'
@@ -35,21 +34,19 @@ app.on('web-contents-created', (_e, wc) => {
   }
   wc.on('will-navigate', lock)
   wc.on('will-redirect', lock)
+  // electron/electron#17635: a <webview> guest gets no mousemove once the pointer leaves its rect and never the
+  // mouseup, so a map drag stops dead at the edge. Tell the host page a drag began on this guest; src/map/mapPanel.js
+  // then puts a transparent overlay over the window and forwards the pointer into the guest. Not preventDefault'd.
+  // The guest still gets its own mouseUp when the pointer stays over it (plain click): map-up lets the host drop the overlay then.
+  wc.on('before-mouse-event', (_e, m) => {
+    if (m.button !== 'left') return
+    if (m.type === 'mouseDown') wc.hostWebContents?.send('geofinder:map-down', wc.id)
+    else if (m.type === 'mouseUp') wc.hostWebContents?.send('geofinder:map-up', wc.id)
+  })
   if (DEBUG_NAV) {
     wc.on('did-navigate', (_ev, url) => console.log('[nav] did-navigate', url))
     wc.on('did-start-navigation', (d) => d.isMainFrame && console.log('[nav] start', d.url))
   }
-})
-
-// Native capture of a map webview: JPEG bytes, <= 1280 px wide.
-ipcMain.handle('geofinder:capture-map', async (event, id) => {
-  const wc = webContents.fromId(id)
-  if (!wc || wc.getType() !== 'webview' || wc.hostWebContents !== event.sender)
-    throw new Error('not a map webview')
-  let img = await wc.capturePage()
-  // capturePage returns device pixels (HiDPI), so check the actual bitmap width.
-  if (img.getSize().width > IMAGE_MAX_WIDTH) img = img.resize({ width: IMAGE_MAX_WIDTH, quality: 'best' })
-  return img.toJPEG(Math.round(IMAGE_JPEG_QUALITY * 100))
 })
 
 // Test hooks (unset in normal runs): GEOFINDER_MAP_ONLY=1 mounts just the bare map panel (src/main.js ?maponly) instead of the game;
@@ -87,9 +84,32 @@ function createWindow(query) {
   loadRenderer(win, query)
 }
 
-app.whenReady().then(() => {
+// Google's consent cookie, so EU users never see consent.google.com before Maps. This is the real "Reject all"
+// value Google itself set on a fresh profile (captured Oct 2026 by clicking "Alle ablehnen"): protobuf of
+// state=4, "boq_identityfrontenduiserver_20261019.08_p0", lang "de", timestamp. If it ever goes stale, the
+// consent page shows again and src/map/mapPanel.js auto-clicks "Reject all" (fallback).
+// GEOFINDER_SOCS (dev/test only): 'skip' = seed nothing, anything else = seed that value instead.
+const SOCS_REJECT_ALL = 'CAESNQgEEitib3FfaWRlbnRpdHlmcm9udGVuZHVpc2VydmVyXzIwMjYxMDE5LjA4X3AwGgJkZSACGgYIgIHg1gY'
+async function seedConsentCookie(maps) {
+  const value = ENV.GEOFINDER_SOCS ?? SOCS_REJECT_ALL
+  if (value === 'skip') return
+  if ((await maps.cookies.get({ name: 'SOCS', domain: '.google.com' })).length) return // user/Google already chose
+  await maps.cookies.set({
+    url: 'https://www.google.com',
+    name: 'SOCS',
+    value,
+    domain: '.google.com',
+    path: '/',
+    secure: true,
+    sameSite: 'lax',
+    expirationDate: Math.floor(Date.now() / 1000) + 13 * 30 * 24 * 3600, // Google's own cookie lasts 13 months
+  })
+}
+
+app.whenReady().then(async () => {
   // Embedded Google/Apple pages get no permissions (geolocation, notifications, media, ...).
   const maps = session.fromPartition(MAPS_PARTITION)
+  await seedConsentCookie(maps).catch((err) => console.error('[main] consent cookie not seeded', err))
   maps.setPermissionRequestHandler((_wc, _perm, cb) => cb(false))
   maps.setPermissionCheckHandler(() => false)
   // Experiment hook for the Apple UA question; unset in normal runs.
