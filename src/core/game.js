@@ -18,14 +18,17 @@
  */
 import {
   PHASE, INTENT, HOST_INTENT, ERR, SYSTEM,
-  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX,
+  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, URL_MAX,
   ROUND_TIMES_MIN, DONE_COUNTDOWN_MS, STARS_MIN, STARS_MAX, sanitizeProfile,
 } from '../contracts.js';
+import { isAllowedMapUrl } from '../../electron/allowlist.js';
 import { allDone, startBlocker } from './selectors.js';
 
 const NOOP = Symbol('noop');   // handler result: valid, but nothing to change
 const has = (o, k) => o != null && Object.hasOwn(o, k);
 const isId = (x) => typeof x === 'string' && x.length > 0 && x.length <= 64 && x !== '__proto__';
+/** a submitted map URL: string, <= URL_MAX, allowed map host (electron/allowlist.js) */
+const isMapUrl = (x) => typeof x === 'string' && x.length > 0 && x.length <= URL_MAX && isAllowedMapUrl(x);
 /** trimmed non-empty label <= CATEGORY_LABEL_MAX, else null */
 const cleanLabel = (x) => {
   if (typeof x !== 'string') return null;
@@ -63,10 +66,10 @@ function addCategoryTo(s, id, label) {
   s.categories.push({ id, label: l });
 }
 
-function chatPush(s, c, text, imageId) {
+function chatPush(s, c, text, url) {
   if (!isId(c.intent.id)) return ERR.invalid;
   if (s.chat.some((m) => m.id === c.intent.id)) return NOOP;
-  s.chat.push({ id: c.intent.id, playerId: c.actor, at: c.now, text, imageId });
+  s.chat.push({ id: c.intent.id, playerId: c.actor, at: c.now, text, url });
   if (s.chat.length > CHAT_HISTORY_MAX) s.chat.splice(0, s.chat.length - CHAT_HISTORY_MAX);
 }
 
@@ -175,13 +178,13 @@ const PLAYER_HANDLERS = {
   [INTENT.capture]: {
     phases: [PHASE.play],
     run: (s, { actor, intent, now }) => {
-      if (!isId(intent.captureId) || !isId(intent.categoryId)) return ERR.invalid;
+      if (!isId(intent.captureId) || !isId(intent.categoryId) || !isMapUrl(intent.url)) return ERR.invalid;
       if (!s.categories.some((c) => c.id === intent.categoryId)) return ERR.notFound;
       const dup = Object.values(s.captures).some((per) => Object.values(per).some((r) => r.captureId === intent.captureId));
       if (dup) return NOOP;
       if (!has(s.captures, intent.categoryId)) s.captures[intent.categoryId] = {};
       // The LAST capture replaces the earlier one (D10).
-      s.captures[intent.categoryId][actor] = { captureId: intent.captureId, playerId: actor, categoryId: intent.categoryId, at: now };
+      s.captures[intent.categoryId][actor] = { captureId: intent.captureId, playerId: actor, categoryId: intent.categoryId, at: now, url: intent.url };
     },
   },
 
@@ -203,16 +206,16 @@ const PLAYER_HANDLERS = {
     },
   },
 
-  [INTENT.chatImage]: {
+  [INTENT.chatLink]: {
     run: (s, c) => {
-      if (!isId(c.intent.imageId)) return ERR.invalid;
+      if (!isMapUrl(c.intent.url)) return ERR.invalid;
       let text = null;
       if (c.intent.text != null) {
         if (typeof c.intent.text !== 'string') return ERR.invalid;
         text = c.intent.text.trim() || null;
         if (text !== null && text.length > CHAT_TEXT_MAX) return ERR.invalid;
       }
-      return chatPush(s, c, text, c.intent.imageId);
+      return chatPush(s, c, text, c.intent.url);
     },
   },
 

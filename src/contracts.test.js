@@ -50,8 +50,8 @@ test('presets, constants and enums are frozen and consistent', () => {
   assert.ok(C.ROUND_TIMES_MIN.includes(C.DEFAULT_ROUND_MIN));
   assert.equal(C.DONE_COUNTDOWN_MS, 60_000);
   assert.equal(C.MAX_PLAYERS, 8);
-  assert.equal(C.IMAGE_MAX_WIDTH, 1280);
-  assert.equal(C.IMAGE_JPEG_QUALITY, 0.8);
+  assert.equal(C.URL_MAX, 2048);
+  assert.equal(C.PROTOCOL_VERSION, 2);
   assert.equal(C.KEYS.profile(), 'geofinder:profile');
   assert.equal(C.KEYS.playerId('b'), 'geofinder:player:b');
   assert.equal(C.PHASE.profile, 'profile');
@@ -76,4 +76,13 @@ test('clock helpers', () => {
   assert.equal(C.msLeft(70_000, off, 4_000), 60_000);
   assert.equal(C.msLeft(70_000, off, 100_000), 0);
   assert.equal(C.msLeft(null, off), null);
+});
+
+test('the image protocol is gone: no imgData/imgRequest, no IMAGE_* exports, chatImage became chatLink', () => {
+  assert.deepEqual(Object.values(C.MSG).sort(), ['hello', 'intent', 'reject', 'state']);
+  assert.deepEqual(Object.keys(C).filter((k) => k.startsWith('IMAGE_')), []);
+  assert.equal(C.ImageMeta, undefined);
+  assert.equal(C.INTENT.chatImage, undefined);
+  assert.equal(C.INTENT.chatLink, 'chatLink');
+  assert.equal(C.INTENT.capture, 'capture');
 });

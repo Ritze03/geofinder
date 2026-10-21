@@ -2,11 +2,14 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PHASE, ERR, SYSTEM, INTENT, HOST_INTENT, createInitialState, defaultProfile,
-  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX,
+  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX, URL_MAX,
 } from '../contracts.js';
-import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, ranking, ratingOf } from './index.js';
+import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, ranking, ratingOf, stateFor } from './index.js';
 
 const T0 = 1_000_000;
+const GURL = 'https://www.google.com/maps/@48.7784234,9.1799782,3a,53.6y,123.43h,100.86t/data=!3m7!1e1!3m5!1sCIHM0ogKEICAgIDy7c62GQ!2e10!7i11264!8i5632';
+const APPLE_LA = 'https://maps.apple.com/look-around?z=17&coordinate=37.819887%2C-122.478529&_mvs=CiQJVlxWNPLoQkAR';
+const APPLE_MAP = 'https://maps.apple.com/frame?z=17&center=37.821476%2C-122.481293&span=0.007983%2C0.017499';
 const prof = (name) => ({ ...defaultProfile(), name });
 
 /** Apply and require success; returns the new state. */
@@ -43,9 +46,9 @@ const doneAll = (s, now) => s.players.filter((p) => p.connected && !p.done).redu
 /** Play game where p1 and p2 captured cat1 and everybody ended the round via the timer -> review at index 0. */
 function review() {
   let s = play(3);
-  s = ok(s, 'p1', { type: INTENT.capture, captureId: 'img1', categoryId: 'cat1' }, T0 + 1);
-  s = ok(s, 'p2', { type: INTENT.capture, captureId: 'img2', categoryId: 'cat1' }, T0 + 2);
-  s = ok(s, 'h', { type: INTENT.capture, captureId: 'img3', categoryId: 'cat1' }, T0 + 3);
+  s = ok(s, 'p1', { type: INTENT.capture, captureId: 'img1', categoryId: 'cat1', url: GURL }, T0 + 1);
+  s = ok(s, 'p2', { type: INTENT.capture, captureId: 'img2', categoryId: 'cat1', url: GURL }, T0 + 2);
+  s = ok(s, 'h', { type: INTENT.capture, captureId: 'img3', categoryId: 'cat1', url: GURL }, T0 + 3);
   const r = tick(s, s.roundEndsAt);
   assert.equal(r.state.phase, PHASE.review);
   return r.state;
@@ -339,28 +342,28 @@ describe('startGame', () => {
 describe('play: capture', () => {
   test('stores a CaptureRef; last capture replaces the earlier one', () => {
     let s = play(3);
-    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1' }, T0 + 10);
-    assert.deepEqual(myCapture(s, 'p1', 'cat1'), { captureId: 'a', playerId: 'p1', categoryId: 'cat1', at: T0 + 10 });
-    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'b', categoryId: 'cat1' }, T0 + 20);
-    assert.deepEqual(myCapture(s, 'p1', 'cat1'), { captureId: 'b', playerId: 'p1', categoryId: 'cat1', at: T0 + 20 });
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1', url: GURL }, T0 + 10);
+    assert.deepEqual(myCapture(s, 'p1', 'cat1'), { captureId: 'a', playerId: 'p1', categoryId: 'cat1', at: T0 + 10, url: GURL });
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'b', categoryId: 'cat1', url: APPLE_LA }, T0 + 20);
+    assert.deepEqual(myCapture(s, 'p1', 'cat1'), { captureId: 'b', playerId: 'p1', categoryId: 'cat1', at: T0 + 20, url: APPLE_LA });
     assert.equal(Object.keys(s.captures.cat1).length, 1);
-    s = ok(s, 'p2', { type: INTENT.capture, captureId: 'c', categoryId: 'cat1' }, T0 + 30);
+    s = ok(s, 'p2', { type: INTENT.capture, captureId: 'c', categoryId: 'cat1', url: GURL }, T0 + 30);
     assert.equal(myCapture(s, 'p1', 'cat1').captureId, 'b');
     assert.equal(myCapture(s, 'p2', 'cat1').captureId, 'c');
   });
   test('unknown category -> notFound; bad ids -> invalid; wrong phase', () => {
     const s = play(3);
-    bad(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'nope' }, ERR.notFound);
-    bad(s, 'p1', { type: INTENT.capture, captureId: '', categoryId: 'cat1' }, ERR.invalid);
-    bad(s, 'p1', { type: INTENT.capture, captureId: 'a' }, ERR.invalid);
-    bad(lobby(2), 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1' }, ERR.wrongPhase);
-    bad(review(), 'p1', { type: INTENT.capture, captureId: 'zz', categoryId: 'cat1' }, ERR.wrongPhase);
+    bad(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'nope', url: GURL }, ERR.notFound);
+    bad(s, 'p1', { type: INTENT.capture, captureId: '', categoryId: 'cat1', url: GURL }, ERR.invalid);
+    bad(s, 'p1', { type: INTENT.capture, captureId: 'a', url: GURL }, ERR.invalid);
+    bad(lobby(2), 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1', url: GURL }, ERR.wrongPhase);
+    bad(review(), 'p1', { type: INTENT.capture, captureId: 'zz', categoryId: 'cat1', url: GURL }, ERR.wrongPhase);
   });
   test('duplicate captureId is ignored (retry), even from another player', () => {
     let s = play(3);
-    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1' });
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1', url: GURL });
     for (const [who, cat] of [['p1', 'cat1'], ['p2', 'cat1'], ['p1', 'cat2']]) {
-      const r = applyIntent(s, who, { type: INTENT.capture, captureId: 'a', categoryId: cat }, T0 + 5);
+      const r = applyIntent(s, who, { type: INTENT.capture, captureId: 'a', categoryId: cat, url: GURL }, T0 + 5);
       assert.equal(r.error, null);
       assert.equal(r.state, s);
     }
@@ -379,7 +382,7 @@ describe('play: mid-game addCategory', () => {
     assert.ok(s.players.every((p) => !p.done));
     assert.equal(s.doneCountdownEndsAt, null);
     assert.equal(s.phase, PHASE.play);
-    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'x', categoryId: 'late' });   // and it can be captured
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'x', categoryId: 'late', url: GURL });   // and it can be captured
     assert.ok(myCapture(s, 'p1', 'late'));
   });
   test('non-host mid-game add -> forbidden; limit applies; duplicate id ignored without clearing done', () => {
@@ -493,10 +496,10 @@ describe('tick / round timer', () => {
 });
 
 describe('chat', () => {
-  test('text: trimmed, appended with author/time/null image; allowed in every phase', () => {
+  test('text: trimmed, appended with author/time/null url; allowed in every phase', () => {
     for (const s0 of [lobby(2), play(2), review(), ok(review(), 'h', { type: INTENT.showResults })]) {
       const s = ok(s0, 'p1', { type: INTENT.chatText, id: 'm1', text: '  hello  ' }, 4242);
-      assert.deepEqual(s.chat.at(-1), { id: 'm1', playerId: 'p1', at: 4242, text: 'hello', imageId: null });
+      assert.deepEqual(s.chat.at(-1), { id: 'm1', playerId: 'p1', at: 4242, text: 'hello', url: null });
     }
   });
   test('text validation: empty / too long / not a string / missing id', () => {
@@ -507,16 +510,27 @@ describe('chat', () => {
     bad(s, 'p1', { type: INTENT.chatText, text: 'hi' }, ERR.invalid);
     ok(s, 'p1', { type: INTENT.chatText, id: 'm', text: 'x'.repeat(CHAT_TEXT_MAX) });
   });
-  test('image: with and without caption', () => {
+  test('link: with and without caption', () => {
     let s = lobby(2);
-    s = ok(s, 'p1', { type: INTENT.chatImage, id: 'm1', imageId: 'img' }, 10);
-    assert.deepEqual(s.chat.at(-1), { id: 'm1', playerId: 'p1', at: 10, text: null, imageId: 'img' });
-    s = ok(s, 'p1', { type: INTENT.chatImage, id: 'm2', imageId: 'img2', text: ' look ' }, 11);
-    assert.equal(s.chat.at(-1).text, 'look');
-    s = ok(s, 'p1', { type: INTENT.chatImage, id: 'm3', imageId: 'img3', text: '   ' }, 12);
+    s = ok(s, 'p1', { type: INTENT.chatLink, id: 'm1', url: GURL }, 10);
+    assert.deepEqual(s.chat.at(-1), { id: 'm1', playerId: 'p1', at: 10, text: null, url: GURL });
+    s = ok(s, 'p1', { type: INTENT.chatLink, id: 'm2', url: APPLE_LA, text: ' look ' }, 11);
+    assert.deepEqual(s.chat.at(-1), { id: 'm2', playerId: 'p1', at: 11, text: 'look', url: APPLE_LA });
+    s = ok(s, 'p1', { type: INTENT.chatLink, id: 'm3', url: APPLE_MAP, text: '   ' }, 12);
     assert.equal(s.chat.at(-1).text, null);
-    bad(s, 'p1', { type: INTENT.chatImage, id: 'm4' }, ERR.invalid);
-    bad(s, 'p1', { type: INTENT.chatImage, id: 'm4', imageId: 'i', text: 'x'.repeat(CHAT_TEXT_MAX + 1) }, ERR.invalid);
+    bad(s, 'p1', { type: INTENT.chatLink, id: 'm4' }, ERR.invalid);
+    bad(s, 'p1', { type: INTENT.chatLink, id: 'm4', url: GURL, text: 'x'.repeat(CHAT_TEXT_MAX + 1) }, ERR.invalid);
+    bad(s, 'p1', { type: INTENT.chatLink, id: 'm4', url: GURL, text: 5 }, ERR.invalid);
+    bad(s, 'p1', { type: INTENT.chatLink, url: GURL }, ERR.invalid);   // missing id
+  });
+  test('link: allowed in every phase; duplicate id ignored; the old chatImage intent is gone', () => {
+    for (const s0 of [lobby(2), play(2), review(), ok(review(), 'h', { type: INTENT.showResults })]) {
+      const s = ok(s0, 'p1', { type: INTENT.chatLink, id: 'lk', url: GURL });
+      assert.equal(s.chat.at(-1).url, GURL);
+      const r = applyIntent(s, 'p1', { type: INTENT.chatLink, id: 'lk', url: APPLE_LA }, T0);
+      assert.equal(r.state, s);
+    }
+    bad(lobby(2), 'p1', { type: 'chatImage', id: 'm', imageId: 'i' }, ERR.invalid);
   });
   test('duplicate chat id is ignored', () => {
     const s = ok(lobby(2), 'p1', { type: INTENT.chatText, id: 'm1', text: 'a' });
@@ -648,7 +662,7 @@ describe('review: rate', () => {
   });
   test('target must have a capture for the category', () => {
     let s = play(3);
-    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1' });
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1', url: GURL });
     s = tick(s, s.roundEndsAt).state;
     bad(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 3 }, ERR.notFound);   // p2 has none
     bad(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'ghost', stars: 3 }, ERR.notFound);
@@ -662,7 +676,7 @@ describe('scoring', () => {
   function scored() {
     let s = play(3);
     for (const [pid, cat] of [['h', 'cat1'], ['p1', 'cat1'], ['p2', 'cat1'], ['h', 'cat2'], ['p1', 'cat2']]) {
-      s = ok(s, pid, { type: INTENT.capture, captureId: `${pid}-${cat}`, categoryId: cat });   // p2 skips cat2
+      s = ok(s, pid, { type: INTENT.capture, captureId: `${pid}-${cat}`, categoryId: cat, url: GURL });   // p2 skips cat2
     }
     s = tick(s, s.roundEndsAt).state;
     const rate = (who, cat, target, stars) => { s = ok(s, who, { type: INTENT.rate, categoryId: cat, targetPlayerId: target, stars }); };
@@ -702,5 +716,125 @@ describe('scoring', () => {
   });
   test('points are derived: state has no points field', () => {
     assert.equal(JSON.stringify(scored()).includes('points'), false);
+  });
+});
+
+describe('url validation', () => {
+  const cap = (url, id = 'u1') => ({ type: INTENT.capture, captureId: id, categoryId: 'cat1', url });
+  const goodUrls = [
+    GURL, APPLE_LA, APPLE_MAP,
+    'https://www.google.com/maps/@48.7784234,9.1799782,15z',
+    'https://consent.google.com/m?continue=https%3A%2F%2Fwww.google.com%2Fmaps%2F%4048.7%2C9.1%2C15z',
+  ];
+  test('capture accepts Google Street View, Apple look-around, Apple map, consent urls', () => {
+    goodUrls.forEach((url, i) => {
+      const s = ok(play(3), 'p1', cap(url, `c${i}`));
+      assert.equal(myCapture(s, 'p1', 'cat1').url, url);
+    });
+  });
+  const badUrls = [
+    ['http scheme', GURL.replace('https:', 'http:')],
+    ['bare host', 'example.com'],
+    ['bare allowed host', 'maps.apple.com'],
+    ['other host', 'https://example.com/maps/@1,2,3z'],
+    ['look-alike host', 'https://www.google.com.evil.example/maps/@1,2,3z'],
+    ['not a maps path', 'https://www.google.com/search?q=x'],
+    ['javascript scheme', 'javascript:alert(1)'],
+    ['too long', GURL + 'a'.repeat(URL_MAX)],
+    ['just over the cap', 'https://maps.apple.com/frame?z=' + '1'.repeat(URL_MAX - 'https://maps.apple.com/frame?z='.length + 1)],
+    ['empty', ''],
+    ['number', 42],
+    ['null', null],
+    ['undefined', undefined],
+    ['object', { href: GURL }],
+    ['array', [GURL]],
+  ];
+  test('capture rejects everything else with ERR.invalid', () => {
+    for (const [, url] of badUrls) bad(play(3), 'p1', cap(url), ERR.invalid);
+    bad(play(3), 'p1', { type: INTENT.capture, captureId: 'u1', categoryId: 'cat1' }, ERR.invalid);   // no url at all
+  });
+  test('a url of exactly URL_MAX chars is accepted', () => {
+    const base = 'https://maps.apple.com/frame?z=';
+    const url = base + '1'.repeat(URL_MAX - base.length);
+    assert.equal(url.length, URL_MAX);
+    ok(play(3), 'p1', cap(url));
+  });
+  test('chatLink uses the same validation', () => {
+    for (const [, url] of badUrls) bad(lobby(2), 'p1', { type: INTENT.chatLink, id: 'm', url }, ERR.invalid);
+    for (const url of goodUrls) ok(lobby(2), 'p1', { type: INTENT.chatLink, id: 'm', url });
+  });
+  test('an invalid url on a duplicate captureId is still invalid (validated before the dedupe)', () => {
+    const s = ok(play(3), 'p1', cap(GURL, 'dup'));
+    bad(s, 'p1', cap('http://x', 'dup'), ERR.invalid);
+  });
+});
+
+describe('stateFor (redaction)', () => {
+  /** play: h, p1, p2 each captured cat1; p1 also cat2; chat link from p2 */
+  function played() {
+    let s = play(3);
+    s = ok(s, 'h', { type: INTENT.capture, captureId: 'c-h', categoryId: 'cat1', url: GURL }, T0 + 1);
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'c-p1', categoryId: 'cat1', url: APPLE_LA }, T0 + 2);
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'c-p1b', categoryId: 'cat2', url: APPLE_MAP }, T0 + 3);
+    s = ok(s, 'p2', { type: INTENT.capture, captureId: 'c-p2', categoryId: 'cat1', url: GURL + '1' }, T0 + 4);
+    s = ok(s, 'p2', { type: INTENT.chatLink, id: 'lk', url: APPLE_LA, text: 'look' }, T0 + 5);
+    return s;
+  }
+  const urls = (s) => Object.fromEntries(Object.entries(s.captures).map(([cat, per]) => [cat, Object.fromEntries(Object.entries(per).map(([pid, r]) => [pid, r.url]))]));
+
+  test('play: own urls kept, everybody else null; refs and counts stay', () => {
+    const s = played();
+    const v = stateFor(s, 'p1');
+    assert.deepEqual(urls(v), { cat1: { h: null, p1: APPLE_LA, p2: null }, cat2: { p1: APPLE_MAP } });
+    assert.deepEqual(urls(stateFor(s, 'h')), { cat1: { h: GURL, p1: null, p2: null }, cat2: { p1: null } });
+    assert.deepEqual(urls(stateFor(s, 'p2')), { cat1: { h: null, p1: null, p2: GURL + '1' }, cat2: { p1: null } });
+    assert.deepEqual(urls(stateFor(s, 'stranger')), { cat1: { h: null, p1: null, p2: null }, cat2: { p1: null } });
+    assert.deepEqual(v.captures.cat1.h, { captureId: 'c-h', playerId: 'h', categoryId: 'cat1', at: T0 + 1, url: null });
+    assert.equal(Object.keys(v.captures.cat1).length, 3);
+    assert.equal(myCapture(v, 'p1', 'cat2').captureId, 'c-p1b');
+  });
+  test('play: chat links are NOT redacted; everything else is unchanged', () => {
+    const s = played();
+    const v = stateFor(s, 'h');
+    assert.deepEqual(v.chat, s.chat);
+    assert.equal(v.chat[0].url, APPLE_LA);
+    const { captures: _a, ...restV } = v; const { captures: _b, ...restS } = s;
+    assert.deepEqual(restV, restS);
+  });
+  test('play: the input is not mutated, and the result shares no capture objects with it', () => {
+    const s = played();
+    const snapshot = structuredClone(s);
+    const v = stateFor(s, 'p1');
+    assert.deepEqual(s, snapshot);
+    assert.notEqual(v, s);
+    assert.notEqual(v.captures, s.captures);
+    assert.equal(s.captures.cat1.h.url, GURL);
+    assert.equal(s.captures.cat1.p1.url, APPLE_LA);
+    v.captures.cat1.p1.url = 'tampered';
+    assert.equal(s.captures.cat1.p1.url, APPLE_LA);
+  });
+  test('play: JSON round-trips (it is what goes on the wire)', () => {
+    const v = stateFor(played(), 'p1');
+    assert.deepEqual(JSON.parse(JSON.stringify(v)), v);
+  });
+  test('play with no captures: still a valid copy', () => {
+    assert.deepEqual(stateFor(play(3), 'p1').captures, {});
+  });
+  test('lobby / review / results: the very same object, urls visible', () => {
+    const r = review();
+    assert.equal(stateFor(r, 'p1'), r);
+    assert.equal(r.captures.cat1.h.url, GURL);
+    assert.equal(stateFor(r, 'nobody').captures.cat1.p1.url, GURL);
+    const res = ok(r, 'h', { type: INTENT.showResults });
+    assert.equal(stateFor(res, 'p2'), res);
+    const l = lobby(2);
+    assert.equal(stateFor(l, 'p1'), l);
+  });
+  test('the round ending (tick -> review) makes everything visible', () => {
+    const s = played();
+    assert.equal(stateFor(s, 'p1').captures.cat1.h.url, null);
+    const rev = tick(s, s.roundEndsAt).state;
+    assert.equal(rev.phase, PHASE.review);
+    assert.equal(stateFor(rev, 'p1').captures.cat1.h.url, GURL);
   });
 });

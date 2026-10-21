@@ -9,7 +9,8 @@
  * GLOBAL CONVENTIONS
  *  - Identity inside a game is `playerId` (uuid string, permanent per install, see KEYS). No seat indices.
  *  - All times are integer MILLISECONDS (epoch, HOST clock) unless the name says otherwise (`minutes`).
- *  - All state and all wire payloads are plain JSON (except image bytes, section 6). No Maps/Sets/undefined.
+ *  - All state and all wire payloads are plain JSON. No Maps/Sets/undefined. There are NO binary messages: a submission is a
+ *    map URL (a short string inside a normal intent), never image bytes.
  *  - Code/identifiers English, user-visible strings English (the mockup is English).
  *  - The host is authoritative and the only one that runs core.applyIntent. Clients render `state` messages.
  *  - Core is PURE: it never calls Date.now()/Math.random(). Time comes in as the `now` argument, and every
@@ -19,7 +20,7 @@
  * SECTIONS (grep the `=====` headers)
  *   1 Constants & enums        5 Wire: messages, transport, session
  *   2 Profile presets          6 Intents (client -> host, host-internal)
- *   3 Identity & storage       7 Image routing (D11)
+ *   3 Identity & storage       7 URL submissions & redaction (stateFor)
  *   4 GameState                8 Shared pure helpers: ids, room codes, profile sanitising, clock skew
  */
 
@@ -32,7 +33,7 @@ const en = (...names) => Object.freeze(Object.fromEntries(names.map((n) => [n, n
 /** Trystero appId; the local (BroadcastChannel) transport channel is `${APP_ID}:${roomCode}`. */
 export const APP_ID = 'geofinder-v1';
 /** Bump on ANY wire or GameState shape change. Mismatch => host answers MSG.reject {reason:'protocol'}. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 /** Seats per room, host included. A 9th joiner gets reject 'full'. */
 export const MAX_PLAYERS = 8;
 /** Host Start needs at least this many connected players (rating needs someone else). */
@@ -47,7 +48,7 @@ export const MAX_CATEGORIES = 20;
 export const MAX_SUGGESTIONS = 20;
 /** Chat text cap per message. */
 export const CHAT_TEXT_MAX = 300;
-/** Core keeps only the newest N chat messages in state.chat (older ones are dropped, their images may be freed). */
+/** Core keeps only the newest N chat messages in state.chat (older ones are dropped). */
 export const CHAT_HISTORY_MAX = 200;
 
 /**
@@ -66,16 +67,9 @@ export const HOST_TICK_MS = 250;
 export const STARS_MIN = 1;
 export const STARS_MAX = 5;
 
-/** Images (D11): JPEG, at most this many px wide, at this quality. mapPanel.capture() already produces them. */
-export const IMAGE_MAX_WIDTH = 1280;
-export const IMAGE_JPEG_QUALITY = 0.8;
-export const IMAGE_MIME = 'image/jpeg';
-/** Receivers drop an incoming image larger than this (a 1280 px q0.8 map shot is ~150-500 KB). */
-export const IMAGE_MAX_BYTES = 2 * 1024 * 1024;
-/** After asking the owner for a missing image, wait this long, then ask everybody (see section 6). */
-export const IMAGE_REQUEST_TIMEOUT_MS = 4000;
-/** Max imageIds in one MSG.imgRequest. */
-export const IMAGE_REQUEST_MAX_IDS = 40;
+/** Max length of a submitted map URL (capture / chatLink). Core also requires isAllowedMapUrl (electron/allowlist.js): https
+ *  Google Maps /maps..., consent.google.<tld>, maps.apple.com. Real Street View URLs are ~410-453 chars, Apple ones < 300. */
+export const URL_MAX = 2048;
 
 /**
  * Phases. 'profile' is LOCAL ONLY (before joining a room); it never appears in GameState.phase.
@@ -161,12 +155,14 @@ export const KEYS = freeze({
 /** @typedef {{ id:string, label:string }} Category   id: 'cat1'..'cat6' for the defaults, else the client-made makeId() */
 /** @typedef {{ id:string, playerId:string, label:string, at:number }} Suggestion   a pending suggestion; accepted/rejected ones are removed */
 
-/** @typedef {{ captureId:string, playerId:string, categoryId:string, at:number }} CaptureRef
- *  Reference only. captureId IS the imageId of the JPEG bytes (travels on MSG.imgData, section 6). `at` = host `now` when
- *  the intent was applied. The LAST capture of a player for a category replaces the previous ref (D10). */
+/** @typedef {{ captureId:string, playerId:string, categoryId:string, at:number, url:(string|null) }} CaptureRef
+ *  A player's submission for a category: the map URL they were looking at (validated by core, see section 7). `url` is null ONLY in
+ *  views redacted by stateFor() (other players' captures while the phase is 'play'); the host's own state always holds it.
+ *  `at` = host `now` when the intent was applied. The LAST capture of a player for a category replaces the previous ref (D10). */
 
-/** @typedef {{ id:string, playerId:string, at:number, text:(string|null), imageId:(string|null) }} ChatMessage
- *  Text and/or a shared screen: text (<= CHAT_TEXT_MAX) is null for a bare "Share screen"; imageId (bytes via MSG.imgData, kind 'chat') is null for plain text. */
+/** @typedef {{ id:string, playerId:string, at:number, text:(string|null), url:(string|null) }} ChatMessage
+ *  Text and/or a shared spot: text (<= CHAT_TEXT_MAX) is null for a bare "Share this spot"; url (validated map URL) is null for plain text.
+ *  Chat links are never redacted: sharing one is deliberate. */
 
 /** @typedef {{
  *   roomCode:string,                                  // 'GEO-7Q4K'; also the Trystero room id
@@ -228,21 +224,21 @@ export function createInitialState(hostPlayer, roomCode = makeRoomCode()) {
 // makeRoomCode) runs with isHost:true and announces it in `hello`. The room code is the Trystero room id. Joiners type it in.
 // Host leaves => peers get SESSION_EVENT.hostGone and the game is over (UI returns to the start/profile screen). No host migration.
 
-/** Wire messages. Trystero action name === type string (all <= 32 bytes; test asserts it). Payloads are JSON, except imgData.
+/** Wire messages. Trystero action name === type string (all <= 32 bytes; test asserts it). Payloads are JSON.
  *  The net layer stamps `from` (sender playerId) on delivery from its own peerId->playerId table (built from `hello`);
- *  receivers NEVER read a playerId out of a payload for authority (ImageMeta.ownerId is informational, see section 6).
+ *  receivers NEVER read a playerId out of a payload for authority.
  *  type        dir                    cadence / when                       payload
  *  hello       any -> each peer       once per connection (on peer join)   { protocol:number, playerId, profile:Profile, isHost:boolean }
  *  reject      host -> one            answer to a refused join             { reason:'full'|'started'|'protocol' }
  *  intent      client -> host         user action                          { intent:Intent }          (host loops its own back to itself)
- *  state       host -> all(+self)     after EVERY applyIntent that changed state, and to a (re)joined peer alone
+ *  state       host -> each peer      after EVERY applyIntent that changed state, and to a (re)joined peer alone
  *                                                                          StateMessage = { rev:number, now:number, state:GameState }  (FULL snapshots, no patches)
- *  imgData     any -> all | one       binary action: JPEG bytes + metadata   data: ArrayBuffer/Uint8Array of the JPEG, metadata: ImageMeta
- *  imgRequest  any -> one | all       ask for images we are missing        { imageIds:string[] }  (<= IMAGE_REQUEST_MAX_IDS)
+ *                                     The state is PER RECIPIENT: the host sends each player stateFor(state, thatPlayerId) (section 7), so during
+ *                                     'play' nobody receives another player's capture url. (Its own loop-back also goes through stateFor.)
  *  (WK's mgInput/mgProgress/mgFinal/mgState have no equivalent: there are no realtime minigames.)
  *  Session-internal `hb` heartbeat is NOT in MSG (the session adds it itself, as in WK).
  */
-export const MSG = en('hello', 'reject', 'intent', 'state', 'imgData', 'imgRequest');
+export const MSG = en('hello', 'reject', 'intent', 'state');
 /** Session-level events (not on the wire). Same `session.on(name, handler)` as messages, so names never collide with MSG.
  *  peerJoin(PeerInfo) | peerLeave({playerId}) | hostGone({}) | hostBack({playerId}) | error({message}).
  *  hostBack fires when the session first learns (or relearns) the host's hello, so it also fires once on a normal join; in v1 the
@@ -254,9 +250,8 @@ export const SESSION_EVENT = en('peerJoin', 'peerLeave', 'hostGone', 'hostBack',
 /** @typedef {null|boolean|number|string|Json[]|{[k:string]:Json}} Json */
 
 /** Low level link, one per transport (src/net/transports/{trystero,local}.js, each `createTransport(roomCode[, types])`).
- *  Same as WK EXCEPT binary support: `send` takes a 4th arg `metadata` and handlers get it as 3rd arg.
- *  Trystero: action.send(data, {target, metadata}) / action.onMessage = (data, {peerId, metadata}); binary arrives as ArrayBuffer and is
- *  chunked automatically (trystero@0.26.0). Local transport must carry (ArrayBuffer, metadata) through BroadcastChannel too.
+ *  `send` takes an optional 4th arg `metadata` and handlers get it as 3rd arg (kept from the binary era; JSON-only traffic does not need it).
+ *  Trystero: action.send(data, {target, metadata}) / action.onMessage = (data, {peerId, metadata}).
  *  @typedef {{
  *    selfId:string,
  *    send(type:string, data:(Json|ArrayBuffer|Uint8Array), targetPeerId?:string, metadata?:Json): void,   // no target => all peers
@@ -293,7 +288,7 @@ export const SESSION_EVENT = en('peerJoin', 'peerLeave', 'hostGone', 'hostBack',
 export const INTENT = en(
   'setProfile', 'setReady', 'suggestCategory', 'acceptSuggestion', 'rejectSuggestion',
   'addCategory', 'removeCategory', 'renameCategory', 'setRoundTime', 'startGame',
-  'capture', 'setDone', 'chatText', 'chatImage',
+  'capture', 'setDone', 'chatText', 'chatLink',
   'rate', 'reviewNext', 'reviewPrev', 'showResults', 'reviewAgain', 'playAgain',
 );
 
@@ -308,10 +303,10 @@ export const INTENT = en(
  * | { type:'renameCategory', categoryId:string, label:string }               // host, lobby only
  * | { type:'setRoundTime', minutes:number }                                  // host, lobby only; must be in ROUND_TIMES_MIN
  * | { type:'startGame' }                                                     // host, lobby; needs >= MIN_PLAYERS connected, ALL connected players (host included) ready, >= 1 category. No countdown: phase becomes 'play' at once
- * | { type:'capture', captureId:string, categoryId:string }                  // any player, play only. The JPEG bytes were ALREADY broadcast as MSG.imgData with imageId === captureId. Replaces the player's earlier ref for that category (last capture counts)
+ * | { type:'capture', captureId:string, categoryId:string, url:string }     // any player, play only. url = the map URL the player is looking at (string, <= URL_MAX, isAllowedMapUrl, else ERR.invalid). Replaces the player's earlier ref for that category (last capture counts)
  * | { type:'setDone', done:boolean }                                         // any player, play only (SET not toggle, like setReady)
  * | { type:'chatText', id:string, text:string }                              // any player, lobby/play/review/results; text trimmed, 1..CHAT_TEXT_MAX
- * | { type:'chatImage', id:string, imageId:string, text?:string }            // any player, "Share screen": bytes already broadcast as MSG.imgData (kind 'chat'); optional caption
+ * | { type:'chatLink', id:string, url:string, text?:string }                 // any player, "Share this spot": url validated like capture's; optional caption
  * | { type:'rate', categoryId:string, targetPlayerId:string, stars:number }  // review only; categoryId must be categories[reviewIndex]; rater = actor; target != actor; target must have a capture for that category; stars STARS_MIN..STARS_MAX; re-rating overwrites
  * | { type:'reviewNext' }                                                    // host, review: reviewIndex+1 (no-op/invalid past the last category)
  * | { type:'reviewPrev' }                                                    // host, review: reviewIndex-1 (invalid below 0)
@@ -330,32 +325,18 @@ export const HOST_INTENT = en('join', 'leave', 'tick');
  * )} HostIntent */
 /** @typedef {PlayerIntent|HostIntent} Intent */
 
-// ===== 7. Image routing (D11) =====
-// IMAGES ARE NEVER IN STATE. State carries refs only (CaptureRef.captureId, ChatMessage.imageId); the bytes are a separate
-// binary action, keyed by imageId. Every peer keeps every image it receives in memory (Map<imageId, {blob/bytes, meta}>).
+// ===== 7. URL submissions & redaction (stateFor) =====
+// A submission is the URL of the map view the player is looking at (Google Maps / Street View, Apple Maps / Look Around); reviewers open it
+// live in a webview, so they can look around, zoom out, and jump back to the submitted spot. Nothing binary travels any more.
 //
-// WHO SENDS WHAT TO WHOM
-//  1. Capture (category): the capturing player makes the JPEG (mapPanel.capture()), picks captureId = makeId(), keeps the bytes locally,
-//     BROADCASTS them to ALL peers (session.broadcast(MSG.imgData, bytes, {metadata})) and THEN sends the host the small intent
-//     {type:'capture', captureId, categoryId}. Host records the CaptureRef and snapshots it. Bytes may arrive before or after the
-//     snapshot with the ref; the UI shows a placeholder until the bytes for a ref are present. Re-capture = new captureId, same flow;
-//     the old bytes are simply orphaned (receivers may drop an image once no ref/chat message points at it).
-//  2. Share screen (chat): same, with a new imageId, metadata kind 'chat', then intent {type:'chatImage', id, imageId, text?}.
-//  3. Late joiner / rejoiner / missed transfer: after applying a snapshot, a peer computes the imageIds it references but does not hold
-//     (all captures refs + chat imageIds) and sends MSG.imgRequest { imageIds } to the OWNER of each (CaptureRef.playerId / ChatMessage.playerId),
-//     grouped per owner. If still missing after IMAGE_REQUEST_TIMEOUT_MS it sends the request to EVERYBODY (session.broadcast).
-//     ANY peer that holds a requested image answers by sending MSG.imgData to the REQUESTER ONLY (session.send), same bytes, same metadata.
-//     Ids nobody holds are silently ignored. Receiving the same imageId twice is harmless (idempotent).
-//  4. Receivers validate: byteLength <= IMAGE_MAX_BYTES, metadata.mime === IMAGE_MIME, metadata.imageId is a string. A host-authority check is not
-//     needed: bytes are only displayed through a ref that the host put in state.
-
-/** @typedef {(
- *   { kind:'capture', imageId:string, ownerId:string, categoryId:string, at:number, mime:'image/jpeg', w?:number, h?:number }
- * | { kind:'chat', imageId:string, ownerId:string, at:number, mime:'image/jpeg', w?:number, h?:number }
- * )} ImageMeta
- *  Trystero binary-action metadata for MSG.imgData. imageId === CaptureRef.captureId for kind 'capture'. ownerId = the player who made the image
- *  (answers to an imgRequest are sent by other peers, so the stamped `from` is NOT the owner). `at` = sender's clock, informational only
- *  (the authoritative time is CaptureRef.at / ChatMessage.at). */
+//  1. Capture: the player's map panel reports its current URL (getUrl()); the client sends {type:'capture', captureId, categoryId, url}.
+//     Core validates the url (string, <= URL_MAX, isAllowedMapUrl) and stores it in CaptureRef.url. Re-capture = new captureId, same flow.
+//  2. Share this spot (chat): {type:'chatLink', id, url, text?}, stored in ChatMessage.url. Chat links are NEVER redacted.
+//  3. Redaction (no peeking while the game runs): the host sends each player stateFor(state, thatPlayerId). In PHASE.play every capture
+//     the viewer does not own comes back with url:null (the ref itself stays, so counts like "2 of 4 found it" still work). In every other
+//     phase stateFor returns the same object unchanged, so review/results see all urls. stateFor is a pure core selector
+//     (src/core/selectors.js, exported from src/core); it never mutates its input.
+//  The URL allowlist is electron/allowlist.js isAllowedMapUrl (also enforced by the webview navigation lock).
 
 // ===== 8. Shared pure helpers =====
 
@@ -373,7 +354,7 @@ function randomChars(alphabet, len) {
   return out.join('');
 }
 
-/** Short random id (8 chars, lowercase unambiguous alphabet) for categories, suggestions, captures, images and chat messages. */
+/** Short random id (8 chars, lowercase unambiguous alphabet) for categories, suggestions, captures and chat messages. */
 export function makeId() { return randomChars(ID_ALPHABET, 8); }
 
 /** Room code = Trystero room id: 'GEO-' + 4 chars from 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' (no 0/O/1/I, also no L), e.g. 'GEO-7Q4K'. */

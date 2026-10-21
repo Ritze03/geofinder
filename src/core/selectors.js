@@ -78,3 +78,16 @@ export function ranking(state) {
   rows.forEach((r, i) => { r.rank = i > 0 && r.points === rows[i - 1].points ? rows[i - 1].rank : i + 1; });
   return rows;
 }
+
+/** What `viewerId` may see. During PHASE.play every capture the viewer does not own gets `url: null` (no peeking while the game
+ *  runs; the refs stay, so "who found it" counts still work). Every other phase returns `state` itself (same object).
+ *  Chat links are never redacted. Pure: returns a copy, never mutates the input. The host sends each player stateFor(state, thatPlayerId). */
+export function stateFor(state, viewerId) {
+  if (state.phase !== PHASE.play) return state;
+  const captures = {};
+  for (const [catId, perPlayer] of Object.entries(state.captures)) {
+    captures[catId] = {};
+    for (const [pid, ref] of Object.entries(perPlayer)) captures[catId][pid] = pid === viewerId ? { ...ref } : { ...ref, url: null };
+  }
+  return { ...state, captures };
+}
