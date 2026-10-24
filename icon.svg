@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1E2129"/>
+      <stop offset="1" stop-color="#14161B"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="256" cy="256" r="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EC4899" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#EC4899" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#tile)"/>
+  <rect x="34" y="34" width="444" height="444" rx="102" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="4"/>
+  <circle cx="256" cy="256" r="190" fill="url(#glow)"/>
+  <path d="M 128 208 V 128 H 208 M 304 128 H 384 V 208 M 384 304 V 384 H 304 M 208 384 H 128 V 304" fill="none" stroke="#F3F4F6" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 256 360 C 256 360 186 296 186 238 A 70 70 0 1 1 326 238 C 326 296 256 360 256 360 Z" fill="#EC4899" stroke="#EC4899" stroke-width="8" stroke-linejoin="round"/>
+  <circle cx="256" cy="236" r="26" fill="#F3F4F6"/>
+</svg>
