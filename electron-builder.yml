@@ -1,0 +1,17 @@
+# Used by install.sh: electron-builder --linux --dir (unpacked app, no installer).
+appId: net.ritze03.geofinder
+productName: Geofinder
+executableName: geofinder
+directories:
+  output: build/pack
+files:
+  - dist/**
+  - electron/**
+  - src/contracts.js
+  - package.json
+  - "!electron/*.test.js"
+npmRebuild: false
+electronDist: node_modules/electron/dist
+linux:
+  target: dir
+  category: Game

@@ -5,3 +5,4 @@ test-results/
 playwright-report/
 .claude/
 .playwright-mcp/
+/build/

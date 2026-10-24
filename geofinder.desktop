@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Geofinder
+Comment=Geobingo-style multiplayer party game with real Google and Apple Maps
+Exec=geofinder
+Categories=Game;
