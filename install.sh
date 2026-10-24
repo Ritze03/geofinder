@@ -39,7 +39,8 @@ build() {
 	prev=$(readlink build/current 2>/dev/null || true)
 	new=app-$(date +%s)-$$
 	cp -a build/pack/linux-unpacked "build/$new"
-	ln -sfn "$new" build/.current.new && mv -fT build/.current.new build/current
+	ln -sfn "$new" build/.current.new
+	mv -fT build/.current.new build/current
 	rm -rf build/pack
 	for d in build/app-*; do
 		case ${d#build/} in "$new"|"$prev") ;; *) rm -rf "$d" ;; esac
