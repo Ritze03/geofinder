@@ -4,7 +4,7 @@ import { createRoom, joinRoom, openPlayer, playerIdOf, stateOf, urlOf } from './
 // The plan's acceptance criterion, one explicit assertion per clause: three players over ?local play a whole game.
 const DONE_COUNTDOWN_MS = 60_000;
 
-test('3 players play a full game: lobby gate, links instead of screenshots, done countdown, ratings = results', async ({ context }) => {
+test('3 players play a full game: lobby gate, links instead of screenshots, done countdown, ratings (bottom bar, doesn\'t fit) = results', async ({ context }) => {
   const errors = [];
   const [host, c1, c2] = [
     await openPlayer(context, errors, 'host', 'h'),
@@ -183,26 +183,51 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
   expect(elapsed, 'review began only after the ~60 s countdown').toBeGreaterThan(DONE_COUNTDOWN_MS - 5_000);
   expect(elapsed, 'and not much later than that').toBeLessThan(DONE_COUNTDOWN_MS + 10_000);
 
-  // ---- 5. ratings -> results totals == NORMALISED stars received ----
-  // [rater, target, stars] per category index (0 = cat1 ... ); only players with a capture can be rated
+  // ---- 5. ratings -> results totals == NORMALISED stars received (3 players); "Doesn't fit" = 0 points, not part of the rater's mean ----
+  // [rater, target, stars] per category index (0 = cat1 ... ); only players with a capture can be rated. NOFIT = "Doesn't fit".
+  const NOFIT = 'nofit';
   const ids = [hid, id1, id2];
   const RATINGS = {
-    0: [[0, 1, 5], [0, 2, 3], [1, 0, 4], [1, 2, 2], [2, 0, 1], [2, 1, 5]],
+    0: [[0, 1, 5], [0, 2, 3], [1, 0, 4], [1, 2, 2], [2, 0, 1], [2, 1, NOFIT]],
     1: [[0, 1, 4], [1, 0, 2], [2, 0, 5], [2, 1, 3]],
   };
-  // each rating counts as stars - (mean of everything that rater gave in the game) + 3, so every rater averages 3
+  // each star rating counts as stars - (mean of all STARS that rater gave in the game) + 3, so every rater averages 3
   const given = [[], [], []];
-  for (const list of Object.values(RATINGS)) for (const [rater, , stars] of list) given[rater].push(stars);
-  const raterMean = given.map((l) => l.reduce((a, b) => a + b, 0) / l.length);   // 4, 8/3, 3.5
+  for (const list of Object.values(RATINGS)) for (const [rater, , stars] of list) if (stars !== NOFIT) given[rater].push(stars);
+  const raterMean = given.map((l) => l.reduce((a, b) => a + b, 0) / l.length);   // 4, 8/3, 3 (Ben's no-fit is not in his mean)
   const expected = [0, 0, 0];
-  for (const list of Object.values(RATINGS)) for (const [rater, target, stars] of list) expected[target] += stars - raterMean[rater] + 3;
-  expect(expected.map((x) => Math.round(x * 10) / 10)).toEqual([11.7, 14, 4.3]);   // raw stars would have been 12 / 17 / 5
-  const shown = ['11.7', '14', '4.3'];
+  for (const list of Object.values(RATINGS)) for (const [rater, target, stars] of list) expected[target] += stars === NOFIT ? 0 : stars - raterMean[rater] + 3;
+  expect(expected.map((x) => Math.round(x * 10) / 10)).toEqual([12.7, 10, 4.3]);   // raw stars would have been 12 / 12 / 5
+  const shown = ['12.7', '10', '4.3'];
 
+  const card = (p, targetIdx) => p.locator(`.rcard[data-pid="${ids[targetIdx]}"]`);
+  const barOf = (p) => p.locator('.rv-rate');
+  const starLabel = (n) => `${n} star${n > 1 ? 's' : ''}`;
+  /** rate with the small stars on the card */
   const rate = async (p, targetIdx, stars) => {
-    const card = p.locator(`.rcard[data-pid="${ids[targetIdx]}"]`);
-    await card.locator(`.stars button[aria-label="${stars} star${stars > 1 ? 's' : ''}"]`).click();
-    await expect(card.locator('.rate small')).toHaveText(`${stars} of 5 stars`);
+    await card(p, targetIdx).locator(`.stars button[aria-label="${starLabel(stars)}"]`).click();
+    await expect(card(p, targetIdx).locator('.rate small')).toHaveText(`${stars} of 5 stars`);
+  };
+  /** select the card, then rate with the big stars in the bottom bar; the card stars stay in sync */
+  const rateBar = async (p, targetIdx, stars) => {
+    await card(p, targetIdx).locator('.pick').click();
+    await expect(barOf(p).locator('.rb-name')).toHaveText(NAMES[targetIdx]);
+    await barOf(p).locator(`.stars button[aria-label="${starLabel(stars)}"]`).click();
+    await expect(barOf(p).locator('.rb-note')).toHaveText(`${stars} of 5 stars`);
+    await expect(barOf(p).locator('.star.on')).toHaveCount(stars);
+    await expect(card(p, targetIdx).locator('.rate small')).toHaveText(`${stars} of 5 stars`);
+    await expect(card(p, targetIdx).locator('.star.on')).toHaveCount(stars);
+  };
+  /** "Doesn't fit" in the bottom bar: shown on the card and the bar, no star lit, counts as rated */
+  const rateNoFit = async (p, targetIdx) => {
+    await card(p, targetIdx).locator('.pick').click();
+    await barOf(p).getByRole('button', { name: "Doesn't fit" }).click();
+    await expect(barOf(p).getByRole('button', { name: "Doesn't fit" })).toHaveAttribute('aria-pressed', 'true');
+    await expect(barOf(p).locator('.rb-note')).toHaveText("Doesn't fit · 0 points");
+    await expect(barOf(p).locator('.star.on')).toHaveCount(0);
+    await expect(card(p, targetIdx)).toHaveClass(/nofit/);
+    await expect(card(p, targetIdx).locator('.rate small')).toHaveText("Doesn't fit · 0 points");
+    await expect(card(p, targetIdx).locator('.star.on')).toHaveCount(0);
   };
   const CATS = 7;
   for (let ci = 0; ci < CATS; ci++) {
@@ -212,15 +237,25 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
     if (ci < 2) {
       // (b) REVIEW SHOWS THE SUBMITTED SPOT: every page holds every url now; selecting a card loads exactly that url in the live viewer
       const owners = Object.keys(submitted[catId]);
-      for (const p of pages) {
+      for (const [pi, p] of pages.entries()) {
         await expect(p.locator('.rcard:not(.miss)')).toHaveCount(owners.length);
         const state = await stateOf(p);
         for (const pid of owners) expect(state.captures[catId][pid].url, `review state carries ${pid}'s url`).toBe(submitted[catId][pid]);
         // a new category auto-selects the first submission (join order: host first)
         await expect(viewerOf(p)).toHaveAttribute('data-url', submitted[catId][owners[0]]);
+        await expect(viewerOf(p)).toBeVisible();
+        await expect(p.locator('.rv-empty')).toBeHidden();
+        await expect(p.locator('.rv-back')).toBeVisible();
         for (const pid of owners) {
           await p.locator(`.rcard[data-pid="${pid}"] .pick`).click();
           await expect(viewerOf(p)).toHaveAttribute('data-url', submitted[catId][pid]);
+          // the big rating bar is for other people's captures only
+          if (pid === ids[pi]) await expect(barOf(p), 'no rating bar on my own capture').toBeHidden();
+          else {
+            await expect(barOf(p)).toBeVisible();
+            await expect(barOf(p).locator('.rb-name')).toHaveText(NAMES[ids.indexOf(pid)]);
+            await expect(barOf(p).getByRole('button', { name: "Doesn't fit" })).toBeVisible();
+          }
         }
         // wander off in the viewer, "Back to submitted spot" re-loads the selected submission
         const last = submitted[catId][owners.at(-1)];
@@ -230,6 +265,30 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
         await expect(viewerOf(p)).toHaveAttribute('data-url', last);
         await expect(p.locator('.rv-vbody .map-bar')).toHaveCount(0);
       }
+    } else {
+      // NOBODY submitted this one: the previous category's spot must not be visible anywhere, there is nothing to rate or to go back to
+      for (const p of pages) {
+        await expect(p.locator('.rv-empty')).toBeVisible();
+        await expect(p.locator('.rv-empty')).toHaveText('Nobody submitted a spot for this one.');
+        await expect(viewerOf(p), 'the viewer (still holding the previous spot) is hidden').toBeHidden();
+        await expect(p.locator('.rv-back')).toBeHidden();
+        await expect(barOf(p)).toBeHidden();
+        await expect(p.locator('.rcard:not(.miss)')).toHaveCount(0);
+      }
+    }
+    if (ci === 2) {
+      // going back to a category with submissions brings the viewer back
+      await host.getByRole('button', { name: '← Previous' }).click();
+      for (const p of pages) {
+        await expect(p.locator('.rv-head .eyebrow')).toHaveText(`Category 2 of ${CATS}`);
+        await expect(viewerOf(p)).toBeVisible();
+        await expect(viewerOf(p)).toHaveAttribute('data-url', submitted.cat2[hid]);
+        await expect(p.locator('.rv-empty')).toBeHidden();
+        await expect(p.locator('.rv-back')).toBeVisible();
+      }
+      await host.getByRole('button', { name: 'Next category →' }).click();
+      for (const p of pages) await expect(p.locator('.rv-head .eyebrow')).toHaveText(`Category 3 of ${CATS}`);
+      for (const p of pages) await expect(viewerOf(p)).toBeHidden();
     }
     if (ci === 1) {
       await expect(c2.locator(`.rcard[data-pid="${id2}"]`)).toHaveClass(/miss/); // c2 skipped cat2
@@ -241,8 +300,25 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
       await expect(progress).toHaveText(/^0\s*\/ 3 rated$/);
       await expect(host.getByRole('button', { name: 'Next category →' })).toBeEnabled();
     }
-    for (const [rater, target, stars] of RATINGS[ci] ?? []) await rate(pages[rater], target, stars);
+    for (const [rater, target, stars] of RATINGS[ci] ?? []) {
+      const p = pages[rater];
+      if (stars === NOFIT) {
+        // Ben first rates 5 stars with the card stars, then switches to "Doesn't fit" (re-rating overwrites); it counts as rated
+        await rate(p, target, 5);
+        await rateNoFit(p, target);
+        await expect(p.locator('.rv-side .row:not(.all) .big')).toHaveText(/^2\s*\/ 2 rated$/);
+      } else if (ci === 1) await rateBar(p, target, stars);   // category 2 is rated with the big stars in the bottom bar
+      else await rate(p, target, stars);
+    }
     if (ci < 2) await expect(progress).toHaveText(/^3\s*\/ 3 rated$/);
+    if (ci === 0) {
+      // switching from "Doesn't fit" back to stars works (bar not pressed any more), and back again; the final answer stays no fit
+      await rateBar(c2, 1, 2);
+      await expect(card(c2, 1)).not.toHaveClass(/nofit/);
+      await expect(barOf(c2).getByRole('button', { name: "Doesn't fit" })).toHaveAttribute('aria-pressed', 'false');
+      await rateNoFit(c2, 1);
+      await expect(progress).toHaveText(/^3\s*\/ 3 rated$/);
+    }
     if (ci < CATS - 1) await host.getByRole('button', { name: 'Next category →' }).click();
   }
   // only the host steps; the others have no controls
@@ -254,11 +330,13 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
     for (let i = 0; i < 3; i++) {
       await expect(p.locator(`tbody tr[data-pid="${ids[i]}"] td.tot`)).toHaveText(new RegExp(`^${shown[i].replace('.', '\\.')}\\s*pts$`));
     }
-    // ranking: Anna 14, Hosty 11.7, Ben 4.3
-    await expect(p.locator('tbody tr').nth(0)).toHaveAttribute('data-pid', id1);
-    await expect(p.locator('tbody tr').nth(1)).toHaveAttribute('data-pid', hid);
+    // ranking: Hosty 12.7, Anna 10, Ben 4.3
+    await expect(p.locator('tbody tr').nth(0)).toHaveAttribute('data-pid', hid);
+    await expect(p.locator('tbody tr').nth(1)).toHaveAttribute('data-pid', id1);
     await expect(p.locator('tbody tr').nth(2)).toHaveAttribute('data-pid', id2);
-    await expect(p.locator(`.pod[data-pid="${id1}"] .blk .num`)).toHaveText('14');
+    await expect(p.locator(`.pod[data-pid="${hid}"] .blk .num`)).toHaveText('12.7');
+    // Anna's category-1 cell: Hosty's 5 counted 4, Ben's "Doesn't fit" counted 0 and is called out
+    await expect(p.locator(`tbody tr[data-pid="${id1}"] td`).nth(1)).toContainText("1× doesn't fit");
   }
   await expect(c1.getByRole('button', { name: 'Play again' })).toBeHidden(); // host-only
 

@@ -8,15 +8,23 @@
 // players without a capture show "No capture" / 0 points and cannot be selected), a big LIVE viewer on the right that shows the selected
 // submission. Clicking a card selects it and loads its url; "Back to submitted spot" loads it again (after the viewer has been panned away).
 // On a category change the first submission is selected automatically.
-// Everyone rates every OTHER capture 1..5 stars (rate { categoryId, targetPlayerId, stars }); re-rating overwrites.
+// Everyone rates every OTHER capture 1..5 stars (rate { categoryId, targetPlayerId, stars }); re-rating overwrites. "Doesn't fit" is the
+// rating RATING_NO_FIT (0): the capture is not the requested thing (0 points, no influence on the rater's normalisation). It is falsy, so
+// ratings are always compared with null / RATING_NO_FIT, never by truthiness.
+// Rating happens in a big bar under the viewer for the SELECTED submission (large stars + "Doesn't fit"); the small stars on the cards
+// stay as a summary and rate too. The bar is hidden for your own capture, for "no capture", for non-players and when nothing is selected.
+// With nothing to show (no submissions / no selection) the viewer element is HIDDEN (the previous spot must never shine through) and
+// the "Back to submitted spot" button is hidden; a hidden viewer keeps its page, the next selection loads a fresh url into it.
 // The side panel also shows how many players have rated everything in this category (ratingProgress); purely informative, Next is never blocked.
 // The viewer is created ONCE per screen (lazily, on the first url) and re-used via load(); cards are built once and patched on every render,
 // so hover/focus survive snapshots and the <webview> is never recreated.
-import { INTENT, STARS_MAX } from '../../contracts.js';
+import { INTENT, STARS_MAX, RATING_NO_FIT } from '../../contracts.js';
 import { capturesOf, ratingOf, ratingProgress, reviewCategory } from '../../core/index.js';
 import { h, avatar, button, colorHex, starRating, tag } from '../kit/index.js';
 import './review.css';
 
+/** Text for a rating (null = not rated yet). */
+const ratingText = (r) => (r === null ? 'Not rated yet' : r === RATING_NO_FIT ? "Doesn't fit · 0 points" : `${r} of ${STARS_MAX} stars`);
 const sameProfile = (a, b) => a.color === b.color && a.head === b.head && a.face === b.face;
 
 export function createReviewScreen({ send, createViewer } = {}) {
@@ -56,7 +64,18 @@ export function createReviewScreen({ send, createViewer } = {}) {
   const emptyMsg = h('p');
   const empty = h('div', { class: 'rv-empty' }, emptyMsg);
   vbody.append(empty);
-  const main = h('div', { class: 'rv-main' }, vbar, vbody);
+
+  // big rating bar under the viewer (selected submission)
+  const rbName = h('b', { class: 'rb-name' });
+  const rbNote = h('small', { class: 'rb-note', role: 'status' });
+  const rbStars = starRating({ onRate: (n) => rateSelected(n) });
+  rbStars.el.setAttribute('aria-label', 'Your rating');
+  const noFitBtn = h('button', {
+    type: 'button', class: 'btn rv-nofit', 'aria-pressed': 'false', title: 'This capture is not what was asked for: 0 points',
+    onClick: () => rateSelected(RATING_NO_FIT),
+  }, "Doesn't fit");
+  const rbar = h('div', { class: 'rv-rate', hidden: true }, h('div', { class: 'rb-who' }, rbName, rbNote), rbStars.el, noFitBtn);
+  const main = h('div', { class: 'rv-main' }, vbar, vbody, rbar);
 
   const el = h('section', { class: 'screen rv', dataset: { screen: 'review' } }, head, h('div', { class: 'rv-body' }, h('div', { class: 'rv-left' }, list, side), main));
 
@@ -77,8 +96,14 @@ export function createReviewScreen({ send, createViewer } = {}) {
     if (!force && url === loadedUrl) return;
     const v = ensureViewer();
     if (!v) return;
+    if (v.element) v.element.hidden = false;
     loadedUrl = url;
     v.load(url);
+  }
+  /** Rates the selected submission (stars 1..5 or RATING_NO_FIT) with the same intent as the card stars. */
+  function rateSelected(stars) {
+    const p = current && selected ? current.params.get(selected) : null;
+    if (p && p.canRate) send({ type: INTENT.rate, categoryId: p.categoryId, targetPlayerId: selected, stars });
   }
   function select(playerId) {
     selected = playerId;
@@ -122,6 +147,7 @@ export function createReviewScreen({ send, createViewer } = {}) {
       root.classList.toggle('off', player.connected === false);
       root.classList.toggle('mine', mine);
       root.classList.toggle('miss', !ref);
+      root.classList.toggle('nofit', p.rating === RATING_NO_FIT);
       missTag.hidden = !!ref;
       meTag.hidden = !(mine && ref);
       p.canRate = !!ref && !mine && p.meIsPlayer;
@@ -136,9 +162,9 @@ export function createReviewScreen({ send, createViewer } = {}) {
       if (showStars) {
         if (!stars.el.isConnected) rate.prepend(stars.el);
         const r = p.rating;
-        stars.set({ value: r || 0, disabled: !p.canRate });
+        stars.set({ value: r || 0, disabled: !p.canRate });   // no-fit (0): no star lit
         stars.el.setAttribute('aria-label', `Rating for ${name}`);
-        note.textContent = !p.meIsPlayer ? 'Only players can rate' : (r ? `${r} of ${STARS_MAX} stars` : 'Not rated yet');
+        note.textContent = !p.meIsPlayer ? 'Only players can rate' : ratingText(r);
       } else {
         stars.el.remove();
         note.textContent = '';
@@ -152,10 +178,29 @@ export function createReviewScreen({ send, createViewer } = {}) {
     const ref = selectedRef();
     const p = current && selected ? current.players.find((x) => x.playerId === selected) : null;
     vWho.replaceChildren(...(p ? [avatar(p.profile, { size: 28 }), h('b', null, p.profile.name || 'Player'), h('span', { class: 'muted' }, ` · ${current.cat.label}`)] : [h('span', { class: 'muted' }, 'No submission selected')]));
-    backBtn.disabled = !ref || !ref.url;
     const nothing = !ref || !ref.url;
+    backBtn.disabled = nothing;
+    backBtn.hidden = nothing;
     empty.hidden = !nothing;
+    // nothing to show: hide the viewer so the previous spot cannot be seen, and forget what was loaded
+    if (nothing) loadedUrl = null;
+    if (viewer && viewer.element) viewer.element.hidden = nothing;
+    paintRateBar(p ? p.profile.name || 'Player' : '');
     emptyMsg.textContent = !current || !current.refs.size ? 'Nobody submitted a spot for this one.' : 'Pick a submission to look around at its spot.';
+  }
+
+  /** The big rating bar: only for a submission I may rate (not mine, has a capture, I am a player). */
+  function paintRateBar(name) {
+    const p = current && selected ? current.params.get(selected) : null;
+    const show = !!p && p.canRate;
+    rbar.hidden = !show;
+    if (!show) return;
+    const r = p.rating;
+    rbName.textContent = name;
+    rbNote.textContent = ratingText(r);
+    rbStars.set({ value: r || 0, disabled: false });
+    noFitBtn.classList.toggle('on', r === RATING_NO_FIT);
+    noFitBtn.setAttribute('aria-pressed', String(r === RATING_NO_FIT));
   }
 
   function sameChildren(parent, items) {
@@ -189,6 +234,7 @@ export function createReviewScreen({ send, createViewer } = {}) {
       list.replaceChildren();
       current = null;
       selected = null;
+      loadedUrl = null;
       paintSelection();
       return;
     }
@@ -201,7 +247,7 @@ export function createReviewScreen({ send, createViewer } = {}) {
 
     // cards, in join order
     const refs = new Map(capturesOf(state, cat.id).map((r) => [r.playerId, r]));
-    current = { cat, refs, players: state.players };
+    current = { cat, refs, players: state.players, params: new Map() };
     const seen = new Set();
     let need = 0;
     let done = 0;
@@ -211,9 +257,11 @@ export function createReviewScreen({ send, createViewer } = {}) {
       if (!card) { card = makeCard(player.playerId); cards.set(player.playerId, card); }
       const ref = refs.get(player.playerId) || null;
       const mine = player.playerId === meId;
-      const rating = ref && !mine ? ratingOf(state, cat.id, player.playerId, meId) : null;
-      if (ref && !mine) { need++; if (rating) done++; }
-      card.update({ player, ref, mine, rating, categoryId: cat.id, label: cat.label, meIsPlayer: !!me });
+      const rating = ref && !mine ? ratingOf(state, cat.id, player.playerId, meId) : null;   // null | 0 (no fit) | 1..5
+      if (ref && !mine) { need++; if (rating !== null) done++; }
+      const params = { player, ref, mine, rating, categoryId: cat.id, label: cat.label, meIsPlayer: !!me };
+      current.params.set(player.playerId, params);
+      card.update(params);
       return card.el;
     });
     for (const id of [...cards.keys()]) if (!seen.has(id)) cards.delete(id);
