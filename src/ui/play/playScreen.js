@@ -48,10 +48,10 @@ export function createPlayScreen({ send, map, onCapture, onShare, createViewer }
     label: 'Map provider', options: PROVIDERS, value: provider,
     onChange: (v) => {
       provider = v;
-      map.show(v);
+      const how = map.show(v);
       closeViewer();
       tip.hidden = v !== 'apple';
-      showToast(`${PROVIDERS.find((p) => p.value === v).label} start page`);
+      showToast(`${PROVIDERS.find((p) => p.value === v).label} ${how === 'carried' ? 'at the same spot' : 'start page'}`);
     },
   });
   const doneBtn = h('button', { type: 'button', class: 'btn dbtn pop', title: "I'm fine if the round ends now", onClick: () => {

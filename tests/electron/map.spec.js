@@ -100,6 +100,83 @@ test('provider buttons switch between Apple Maps and Google Maps', async () => {
   await reachGoogleMaps()
 })
 
+// Berlin start points (src/map/translate.js START_URLS); the two views describe roughly the same area.
+const BERLIN = { lat: 52.52, lng: 13.43 }
+const GOOGLE_START = 'https://www.google.com/maps/@52.5192871,13.4148213,14942m/data=!3m1!1e3'
+const APPLE_START = 'https://maps.apple.com/frame?center=52.517882%2C13.450507&span=0.350622%2C0.985401'
+// Position of whatever the map shows now: Google /@lat,lng,..., Apple center= / ll= / coordinate=.
+const urlPos = (u) => {
+  const g = /\/@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(u)
+  if (g) return { lat: Number(g[1]), lng: Number(g[2]) }
+  const a = /[?&](?:center|ll|coordinate)=(-?\d+\.?\d*)(?:,|%2C)(-?\d+\.?\d*)/i.exec(u)
+  return a ? { lat: Number(a[1]), lng: Number(a[2]) } : null
+}
+const nearBerlin = (u) => {
+  const p = urlPos(u)
+  return !!p && Math.abs(p.lat - BERLIN.lat) < 0.02 && Math.abs(p.lng - BERLIN.lng) < 0.04
+}
+
+test('start points: both load, Apple keeps the Berlin frame, Google stays satellite', async () => {
+  await page.evaluate((u) => window.mapPanel.load(u), APPLE_START)
+  await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(/^https:\/\/maps\.apple\.com\//)
+  await page.waitForTimeout(3000)
+  console.log(`apple start -> ${await viewUrl()}`)
+  expect(nearBerlin(await viewUrl())).toBe(true)
+
+  await page.evaluate((u) => window.mapPanel.load(u), GOOGLE_START)
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@52\.\d+,13\.\d+,\d+m\/data=/)
+  await page.waitForTimeout(3000)
+  console.log(`google start -> ${await page.evaluate(() => window.mapPanel.getUrl())}`)
+})
+
+test('provider buttons teleport: Google -> Apple -> Google keep the Berlin spot', async () => {
+  await page.evaluate((u) => window.mapPanel.load(u), GOOGLE_START)
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/\/maps\/@52\./)
+  await page.waitForTimeout(3000) // Google rewrites Nm to fit the window; translate from what it settled on
+  const gm = Number(/,(\d+)m\//.exec(await page.evaluate(() => window.mapPanel.getUrl()))?.[1])
+
+  await page.click('button[data-provider=apple]')
+  await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(/^https:\/\/maps\.apple\.com\//)
+  await page.waitForTimeout(4000)
+  console.log(`google ${gm}m -> apple: ${await viewUrl()}`)
+  expect(nearBerlin(await viewUrl()), `Apple URL ${await viewUrl()}`).toBe(true)
+  // Scale carried over too: Apple's lat span in metres is about Google's Nm (Apple may refit a little to its window).
+  const span = Number(/span=([\d.]+)(?:,|%2C)/.exec(await viewUrl())?.[1]) * 111320
+  expect(span / gm, `Apple span ${span} m vs Google ${gm} m`).toBeGreaterThan(0.7)
+  expect(span / gm).toBeLessThan(1.4)
+  expect(await inView('document.body.innerText.length')).toBeGreaterThan(0)
+
+  await page.click('button[data-provider=google]')
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@/)
+  await page.waitForTimeout(4000)
+  const back = await page.evaluate(() => window.mapPanel.getUrl())
+  console.log(`apple -> google: ${back}`)
+  expect(nearBerlin(back), `Google URL ${back}`).toBe(true)
+  expect(back).toMatch(/!1e3/) // satellite
+})
+
+test('a provider button on the provider already shown resets to its start point', async () => {
+  await page.click('button[data-provider=google]')
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/\/maps\/@52\.519\d*,13\.414\d*,\d+m\/data=/)
+})
+
+test('teleport from a Street View URL lands on Apple at the same position', async () => {
+  const sv = 'https://www.google.com/maps/@52.5162746,13.3777041,3a,75y,123.43h,90t/data=!3m1!1e1'
+  await page.evaluate((u) => window.mapPanel.load(u), sv)
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/\/maps\/@52\.51\d*,13\.37\d*,3a/)
+  await page.waitForTimeout(2000)
+  await page.click('button[data-provider=apple]')
+  await expect.poll(viewUrl, { timeout: 60_000 }).toMatch(/^https:\/\/maps\.apple\.com\//)
+  await page.waitForTimeout(4000)
+  const u = await viewUrl()
+  console.log(`street view -> apple: ${u}`)
+  const p = urlPos(u)
+  expect(p && Math.abs(p.lat - 52.5163) < 0.01 && Math.abs(p.lng - 13.3777) < 0.01, `Apple URL ${u}`).toBe(true)
+
+  await page.click('button[data-provider=google]') // leave Google shown for the tests below
+  await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@52\.51/)
+})
+
 test('getUrl returns the live Google Maps URL without tracking params', async () => {
   await expect.poll(() => page.evaluate(() => window.mapPanel.getUrl()), { timeout: 60_000 }).toMatch(/^https:\/\/www\.google\.[a-z.]+\/maps\/@/)
   const u = await page.evaluate(() => window.mapPanel.getUrl())
