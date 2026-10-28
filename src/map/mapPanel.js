@@ -4,10 +4,12 @@ import googleView from './css/google-view.css?raw'
 import googlePlay from './css/google-play.css?raw'
 import appleView from './css/apple-view.css?raw'
 import applePlay from './css/apple-play.css?raw'
+import { START_URLS, translateMapUrl } from './translate.js'
 
+// Start points are Berlin (satellite on Google, the /frame embed on Apple), see translate.js.
 const PROVIDERS = {
-  google: { label: 'Google Maps', url: 'https://www.google.com/maps' },
-  apple: { label: 'Apple Maps', url: 'https://maps.apple.com/' },
+  google: { label: 'Google Maps', url: START_URLS.google },
+  apple: { label: 'Apple Maps', url: START_URLS.apple },
 }
 
 // Per-provider CSS, picked by the page's host: 'view' hides all provider chrome, 'play' only account + menus.
@@ -53,7 +55,8 @@ function cleanMapUrl(url) {
 //   createMapPanel(container, { mode = 'play' }) -> { element, webview, show, load, getUrl, destroy }
 //   mode 'play'  provider bar; light CSS (hides sign-in + menus; search stays)
 //   mode 'view'  no bar; full clean CSS (only map/panorama, zoom, compass, attribution)
-//   show('google' | 'apple')  resets the webview to that provider's start page
+//   show('google' | 'apple')  switches provider: lands on the same spot when the current URL can be translated (translate.js),
+//                otherwise (or when already on that provider) on its Berlin start point. Returns 'carried' | 'start'.
 //   load(url)    webview.loadURL(url) if isAllowedMapUrl(url), else ignored (loadURL does not trigger the main-process navigation lock)
 //   getUrl()     current URL without Google's entry/g_ep params; null before dom-ready.
 //                Callers can test /look-around in it (Apple expanded Look Around) for the provider tip.
@@ -105,8 +108,11 @@ export function createMapPanel(container, { mode = 'play' } = {}) {
     const p = PROVIDERS[provider]
     if (!p) throw new Error(`unknown map provider: ${provider}`)
     mark(provider)
-    if (!ready) return load(p.url) // loadURL throws before dom-ready: use the pending-url path
-    webview.loadURL(p.url).catch(() => {}) // aborted/superseded loads are not errors here
+    const carried = ready ? translateMapUrl(getUrl(), provider) : null
+    const url = carried ?? p.url
+    if (!ready) load(url) // loadURL throws before dom-ready: use the pending-url path
+    else webview.loadURL(url).catch(() => {}) // aborted/superseded loads are not errors here
+    return carried ? 'carried' : 'start'
   }
 
   let ready = false // webview.getURL()/getWebContentsId()/loadURL() are not usable before dom-ready
