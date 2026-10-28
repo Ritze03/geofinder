@@ -41,6 +41,9 @@
 .rv-side p { color: var(--mut); font-size: 13px; }
 .rv-side .acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .rv-side .tag { align-self: flex-start; }
+.rv-side .rv-ready { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; }
+.rv-side .rv-ready small { font-size: 12px; font-weight: 600; opacity: .8; }
+.rv-side .rv-ready small:empty { display: none; }
 
 /* the viewer */
 .rv-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--win); isolation: isolate; }

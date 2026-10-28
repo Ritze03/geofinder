@@ -193,6 +193,7 @@ export const KEYS = freeze({
  *   captures:Object<string, Object<string, CaptureRef>>, // captures[categoryId][playerId]; missing key = not captured
  *   chat:ChatMessage[],                               // oldest first, <= CHAT_HISTORY_MAX
  *   reviewIndex:number,                               // index into categories of the category being reviewed (review phase), else 0
+ *   reviewReady:string[],                             // playerIds who pressed Ready for the CURRENT review category; [] outside review
  *   ratings:Object<string, Object<string, Object<string, number>>>, // ratings[categoryId][targetPlayerId][raterPlayerId] = STARS_MIN..STARS_MAX or RATING_NO_FIT (0); never a self-rating
  * }} GameState
  *
@@ -231,6 +232,7 @@ export function createInitialState(hostPlayer, roomCode = makeRoomCode()) {
     captures: {},
     chat: [],
     reviewIndex: 0,
+    reviewReady: [],
     ratings: {},
   };
 }
@@ -303,7 +305,7 @@ export const INTENT = en(
   'setProfile', 'setReady', 'suggestCategory', 'acceptSuggestion', 'rejectSuggestion',
   'addCategory', 'removeCategory', 'renameCategory', 'setRoundTime', 'startGame',
   'capture', 'setDone', 'chatText', 'chatLink',
-  'rate', 'reviewNext', 'reviewPrev', 'showResults', 'reviewAgain', 'playAgain',
+  'rate', 'reviewReady', 'reviewNext', 'reviewPrev', 'showResults', 'reviewAgain', 'playAgain',
 );
 
 /** @typedef {(
@@ -322,9 +324,10 @@ export const INTENT = en(
  * | { type:'chatText', id:string, text:string }                              // any player, lobby/play/review/results; text trimmed, 1..CHAT_TEXT_MAX
  * | { type:'chatLink', id:string, url:string, text?:string }                 // any player, "Share this spot": url validated like capture's; optional caption
  * | { type:'rate', categoryId:string, targetPlayerId:string, stars:number }  // review only; categoryId must be categories[reviewIndex]; rater = actor; target != actor; target must have a capture for that category; stars STARS_MIN..STARS_MAX or RATING_NO_FIT (0 = "Doesn't fit"); re-rating overwrites (switching between stars and no-fit is fine)
- * | { type:'reviewNext' }                                                    // host, review: reviewIndex+1 (no-op/invalid past the last category)
- * | { type:'reviewPrev' }                                                    // host, review: reviewIndex-1 (invalid below 0)
- * | { type:'showResults' }                                                   // host, review (any index; the UI offers it on the last category): phase 'results'
+ * | { type:'reviewReady', ready:boolean }                                   // any player incl. host, review only. SET not toggle. Adds/removes the actor in state.reviewReady. Not gated on having rated. As soon as EVERY connected player is in reviewReady the reducer moves on AT ONCE (no countdown): reviewIndex+1, or phase 'results' after the last category. The same check runs when a player leaves, so an away player never blocks. The list is emptied on every category/phase change (reviewNext/Prev, auto-advance, showResults, reviewAgain, tick into review, startGame, playAgain)
+ * | { type:'reviewNext' }                                                    // host override, review: reviewIndex+1 (no-op past the last category); clears reviewReady
+ * | { type:'reviewPrev' }                                                    // host override, review: reviewIndex-1 (no-op below 0); clears reviewReady
+ * | { type:'showResults' }                                                   // host override, review (any index): phase 'results'
  * | { type:'reviewAgain' }                                                   // host, results: back to phase 'review', reviewIndex 0, ratings kept (mockup "Review the captures again")
  * | { type:'playAgain' }                                                     // host, results: back to 'lobby' keeping players/categories/settings; clears captures, chat, ratings, suggestions, timers, reviewIndex, ready, done
  * )} PlayerIntent */

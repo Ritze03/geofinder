@@ -23,6 +23,19 @@ export function allDone(state) {
   return c.length > 0 && c.every((p) => p.done);
 }
 
+/** Review: has the player pressed Ready for the current category? */
+export const isReviewReady = (state, playerId) => state.reviewReady.includes(playerId);
+/** Review: how many CONNECTED players are ready for the current category. @returns {{ ready:number, total:number }} */
+export function reviewReadyProgress(state) {
+  const c = connectedPlayers(state);
+  return { ready: c.filter((p) => isReviewReady(state, p.playerId)).length, total: c.length };
+}
+/** All CONNECTED players ready in review, and at least one connected player (what makes the reducer move on). */
+export function allReviewReady(state) {
+  const { ready, total } = reviewReadyProgress(state);
+  return total > 0 && ready === total;
+}
+
 /** Why Start is currently impossible: ERR.tooFewPlayers | ERR.noCategories | ERR.notReady, or null when startable.
  *  Phase/host checks are NOT part of it (those are the caller's business); same order applyIntent(startGame) uses. */
 export function startBlocker(state) {
@@ -104,6 +117,12 @@ export function pointsOf(state, playerId, means = raterMeans(state)) {
 
 /** Points for display: rounded to one decimal, no ".0" when whole (12, 12.5). */
 export const formatPoints = (points) => String(Number(points.toFixed(1)) + 0);   // + 0 turns -0 into 0
+
+/** How many captures of a category `playerId` still has to rate (others' captures without a rating from them). */
+export function unratedCount(state, categoryId, playerId) {
+  return state.players.filter((p) => p.playerId !== playerId && myCapture(state, p.playerId, categoryId)
+    && ratingOf(state, categoryId, p.playerId, playerId) === null).length;
+}
 
 /** Review progress of one category: how many players have finished rating it.
  *  A player NEEDS to rate when they are connected and at least one OTHER player has a capture in the category (self-rating is

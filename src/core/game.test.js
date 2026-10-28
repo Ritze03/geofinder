@@ -4,7 +4,7 @@ import {
   PHASE, ERR, SYSTEM, INTENT, HOST_INTENT, createInitialState, defaultProfile,
   MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX, URL_MAX, RATING_NO_FIT,
 } from '../contracts.js';
-import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, categoryScore, raterMeans, formatPoints, ratingProgress, ranking, ratingOf, stateFor, normalizes } from './index.js';
+import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, categoryScore, raterMeans, formatPoints, ratingProgress, ranking, ratingOf, stateFor, normalizes, isReviewReady, reviewReadyProgress, allReviewReady, unratedCount } from './index.js';
 
 const T0 = 1_000_000;
 const GURL = 'https://www.google.com/maps/@48.7784234,9.1799782,3a,53.6y,123.43h,100.86t/data=!3m7!1e1!3m5!1sCIHM0ogKEICAgIDy7c62GQ!2e10!7i11264!8i5632';
@@ -618,6 +618,122 @@ describe('review: navigation', () => {
     s = ok(s, 'h', { type: INTENT.showResults });
     s = ok(s, 'h', { type: INTENT.playAgain });
     assert.deepEqual(s.players.map((p) => p.playerId), ['h', 'p1']);
+  });
+});
+
+describe('review: ready', () => {
+  const ready = (s, who, r = true) => ok(s, who, { type: INTENT.reviewReady, ready: r });
+  test('toggles the actor flag (SET semantics, idempotent) and un-ready works', () => {
+    let s = review();
+    assert.deepEqual(s.reviewReady, []);
+    s = ready(s, 'p1');
+    assert.deepEqual(s.reviewReady, ['p1']);
+    assert.equal(isReviewReady(s, 'p1'), true);
+    assert.equal(isReviewReady(s, 'p2'), false);
+    assert.deepEqual(reviewReadyProgress(s), { ready: 1, total: 3 });
+    const again = applyIntent(s, 'p1', { type: INTENT.reviewReady, ready: true }, T0);
+    assert.equal(again.state, s);   // no rev bump
+    s = ready(s, 'p2');
+    s = ready(s, 'p1', false);
+    assert.deepEqual(s.reviewReady, ['p2']);
+    const noop = applyIntent(s, 'p1', { type: INTENT.reviewReady, ready: false }, T0);
+    assert.equal(noop.state, s);
+    assert.equal(allReviewReady(s), false);
+  });
+  test('payload must be boolean; review phase only; unknown actor forbidden', () => {
+    const s = review();
+    for (const v of [1, 'true', null, undefined]) bad(s, 'p1', { type: INTENT.reviewReady, ready: v }, ERR.invalid);
+    bad(play(3), 'p1', { type: INTENT.reviewReady, ready: true }, ERR.wrongPhase);
+    bad(lobby(3), 'p1', { type: INTENT.reviewReady, ready: true }, ERR.wrongPhase);
+    bad(ok(s, 'h', { type: INTENT.showResults }), 'p1', { type: INTENT.reviewReady, ready: true }, ERR.wrongPhase);
+    bad(s, 'ghost', { type: INTENT.reviewReady, ready: true }, ERR.forbidden);
+  });
+  test('everyone ready advances exactly one category, at once, and clears the flags', () => {
+    let s = review();
+    s = ready(s, 'h');
+    s = ready(s, 'p1');
+    assert.equal(s.reviewIndex, 0);   // 2 of 3: stays
+    const rev = s.rev;
+    s = ready(s, 'p2');
+    assert.equal(s.phase, PHASE.review);
+    assert.equal(s.reviewIndex, 1);
+    assert.deepEqual(s.reviewReady, []);
+    assert.equal(s.rev, rev + 1);   // one change, one rev
+    assert.ok(s.players.every((p) => p.connected));
+  });
+  test('ready is not gated on rating', () => {
+    let s = review();
+    assert.equal(unratedCount(s, 'cat1', 'p1'), 2);
+    for (const id of ['h', 'p1', 'p2']) s = ready(s, id);
+    assert.equal(s.reviewIndex, 1);
+    assert.deepEqual(s.ratings, {});
+  });
+  test('unratedCount counts the other captures still without my rating', () => {
+    let s = review();
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 3 });
+    assert.equal(unratedCount(s, 'cat1', 'p1'), 1);
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 3 });
+    assert.equal(unratedCount(s, 'cat1', 'p1'), 0);
+    assert.equal(unratedCount(s, 'cat2', 'p1'), 0);   // nothing captured there
+  });
+  test('the last category goes to results', () => {
+    let s = review();
+    const last = s.categories.length - 1;
+    for (let i = 0; i < last; i++) s = ok(s, 'h', { type: INTENT.reviewNext });
+    for (const id of ['h', 'p1']) s = ready(s, id);
+    assert.equal(s.phase, PHASE.review);
+    s = ready(s, 'p2');
+    assert.equal(s.phase, PHASE.results);
+    assert.deepEqual(s.reviewReady, []);
+  });
+  test('flags are per category: host Next / Prev, reviewAgain and showResults clear them', () => {
+    let s = ready(review(), 'p1');
+    s = ok(s, 'h', { type: INTENT.reviewNext });
+    assert.deepEqual(s.reviewReady, []);
+    s = ready(s, 'p1');
+    s = ok(s, 'h', { type: INTENT.reviewPrev });
+    assert.deepEqual(s.reviewReady, []);
+    s = ready(s, 'p1');
+    s = ok(s, 'h', { type: INTENT.showResults });
+    assert.deepEqual(s.reviewReady, []);
+    s = ok(s, 'h', { type: INTENT.reviewAgain });
+    assert.equal(s.reviewIndex, 0);
+    assert.deepEqual(s.reviewReady, []);
+    // a clamped Next (no-op) must not wipe the flags
+    s = ready(s, 'p1');
+    s = ok(s, 'h', { type: INTENT.reviewPrev });   // index 0: no-op
+    assert.deepEqual(s.reviewReady, ['p1']);
+  });
+  test('an away player does not block; a leave that completes "all ready" advances', () => {
+    let s = leave(review(), 'p2');
+    s = ready(s, 'h');
+    assert.equal(s.reviewIndex, 0);
+    s = ready(s, 'p1');   // h and p1 are all that is connected
+    assert.equal(s.reviewIndex, 1);
+    // everyone else is ready, then the last holdout drops out
+    s = review();
+    s = ready(s, 'h');
+    s = ready(s, 'p1');
+    assert.equal(s.reviewIndex, 0);
+    s = leave(s, 'p2');
+    assert.equal(s.reviewIndex, 1);
+    assert.deepEqual(s.reviewReady, []);
+  });
+  test('a ready flag of a player who then leaves is dropped on advance; nobody connected never advances', () => {
+    let s = ready(review(), 'p2');
+    s = leave(s, 'p2');
+    s = leave(s, 'p1');
+    assert.equal(s.reviewIndex, 0);   // h not ready yet
+    s = ready(s, 'h');
+    assert.equal(s.reviewIndex, 1);
+    assert.deepEqual(s.reviewReady, []);
+  });
+  test('tick into review and playAgain start with no flags', () => {
+    const s = review();
+    assert.deepEqual(s.reviewReady, []);
+    let r = ok(s, 'h', { type: INTENT.showResults });
+    r = ok(r, 'h', { type: INTENT.playAgain });
+    assert.deepEqual(r.reviewReady, []);
   });
 });
 

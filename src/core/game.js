@@ -22,7 +22,7 @@ import {
   ROUND_TIMES_MIN, DONE_COUNTDOWN_MS, STARS_MIN, STARS_MAX, RATING_NO_FIT, sanitizeProfile,
 } from '../contracts.js';
 import { isAllowedMapUrl } from '../../electron/allowlist.js';
-import { allDone, startBlocker } from './selectors.js';
+import { allDone, allReviewReady, startBlocker } from './selectors.js';
 
 const NOOP = Symbol('noop');   // handler result: valid, but nothing to change
 const has = (o, k) => o != null && Object.hasOwn(o, k);
@@ -41,6 +41,14 @@ function syncCountdown(s, now) {
   if (s.phase !== PHASE.play) return;
   if (allDone(s)) { if (s.doneCountdownEndsAt == null) s.doneCountdownEndsAt = now + DONE_COUNTDOWN_MS; }
   else s.doneCountdownEndsAt = null;
+}
+
+/** Review: once every connected player is ready, move on at once (next category, or results after the last). Flags reset either way. */
+function syncReviewReady(s) {
+  if (s.phase !== PHASE.review || !allReviewReady(s)) return;
+  if (s.reviewIndex >= s.categories.length - 1) s.phase = PHASE.results;
+  else s.reviewIndex += 1;
+  s.reviewReady = [];
 }
 
 /** Is the round over at `now`? (play phase, round timer or done countdown expired) */
@@ -171,6 +179,7 @@ const PLAYER_HANDLERS = {
       s.captures = {};
       s.ratings = {};
       s.reviewIndex = 0;
+      s.reviewReady = [];
       for (const p of s.players) p.done = false;
     },
   },
@@ -233,16 +242,26 @@ const PLAYER_HANDLERS = {
     },
   },
 
+  // Everyone pressing Ready moves the review on (syncReviewReady); next / prev / showResults are the host's override.
+  [INTENT.reviewReady]: {
+    phases: [PHASE.review],
+    run: (s, { actor, intent }) => {
+      if (typeof intent.ready !== 'boolean') return ERR.invalid;
+      s.reviewReady = s.reviewReady.filter((id) => id !== actor);
+      if (intent.ready) s.reviewReady.push(actor);
+      syncReviewReady(s);
+    },
+  },
   [INTENT.reviewNext]: {
     host: true, phases: [PHASE.review],
-    run: (s) => { if (s.reviewIndex >= s.categories.length - 1) return NOOP; s.reviewIndex += 1; },
+    run: (s) => { if (s.reviewIndex >= s.categories.length - 1) return NOOP; s.reviewIndex += 1; s.reviewReady = []; },
   },
   [INTENT.reviewPrev]: {
     host: true, phases: [PHASE.review],
-    run: (s) => { if (s.reviewIndex <= 0) return NOOP; s.reviewIndex -= 1; },
+    run: (s) => { if (s.reviewIndex <= 0) return NOOP; s.reviewIndex -= 1; s.reviewReady = []; },
   },
-  [INTENT.showResults]: { host: true, phases: [PHASE.review], run: (s) => { s.phase = PHASE.results; } },
-  [INTENT.reviewAgain]: { host: true, phases: [PHASE.results], run: (s) => { s.phase = PHASE.review; s.reviewIndex = 0; } },
+  [INTENT.showResults]: { host: true, phases: [PHASE.review], run: (s) => { s.phase = PHASE.results; s.reviewReady = []; } },
+  [INTENT.reviewAgain]: { host: true, phases: [PHASE.results], run: (s) => { s.phase = PHASE.review; s.reviewIndex = 0; s.reviewReady = []; } },
 
   [INTENT.playAgain]: {
     host: true, phases: [PHASE.results],
@@ -252,7 +271,7 @@ const PLAYER_HANDLERS = {
       s.players = s.players.filter((p) => p.connected || p.isHost);
       for (const p of s.players) { p.ready = false; p.done = false; }
       s.captures = {}; s.chat = []; s.ratings = {}; s.suggestions = [];
-      s.roundEndsAt = null; s.doneCountdownEndsAt = null; s.reviewIndex = 0;
+      s.roundEndsAt = null; s.doneCountdownEndsAt = null; s.reviewIndex = 0; s.reviewReady = [];
     },
   },
 };
@@ -282,6 +301,7 @@ const SYSTEM_HANDLERS = {
     } else {
       p.connected = false;
       syncCountdown(s, now);   // a leave can complete "all done" (start) or, never, cancel it
+      syncReviewReady(s);      // ... and can complete "all ready" in review
     }
   },
 
@@ -289,6 +309,7 @@ const SYSTEM_HANDLERS = {
     if (!roundDue(s, now)) return NOOP;
     s.phase = PHASE.review;
     s.reviewIndex = 0;
+    s.reviewReady = [];
     s.roundEndsAt = null;
     s.doneCountdownEndsAt = null;
   },
