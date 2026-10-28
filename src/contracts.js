@@ -66,6 +66,8 @@ export const HOST_TICK_MS = 250;
 /** Review rating range. */
 export const STARS_MIN = 1;
 export const STARS_MAX = 5;
+/** Scoring: every rater's own average is shifted to this value (see "DERIVED, NOT STORED" in section 4). */
+export const SCORE_MEAN = 3;
 
 /** Max length of a submitted map URL (capture / chatLink). Core also requires isAllowedMapUrl (electron/allowlist.js): https
  *  Google Maps /maps..., consent.google.<tld>, maps.apple.com. Real Street View URLs are ~410-453 chars, Apple ones < 300. */
@@ -140,9 +142,13 @@ export const KEYS = freeze({
 // `rev` increments on every applyIntent that changed anything; clients drop `state` messages with rev <= last applied.
 // There is NO save/resume: host gone => game over (SESSION_EVENT.hostGone).
 //
-// DERIVED, NOT STORED: points. points(player) = sum of every star rating that player RECEIVED over all categories
-// (ratings[cat][player][*]); a missing capture simply has no ratings => 0. Results ranking = players sorted by points desc.
-// core exports the selectors; state holds only the raw ratings.
+// DERIVED, NOT STORED: points. points(player) = sum of every rating that player RECEIVED over all categories
+// (ratings[cat][player][*]), each NORMALISED per rater so harsh and generous raters do not bias the result:
+//   counted = stars - mean(all stars that rater gave in this game, every category) + SCORE_MEAN
+// (additive shift, no clamping, so a rater's average always becomes SCORE_MEAN; a rater who only ever gives the same stars, or has
+// a single rating, counts as SCORE_MEAN). Points are therefore FRACTIONAL; show them via core's formatPoints (one decimal, none if whole).
+// A missing capture simply has no ratings => 0. Results ranking = players sorted by points desc.
+// The raw stars (what a rater gave and sees while rating) are untouched. core exports the selectors; state holds only the raw ratings.
 
 /** @typedef {{ playerId:string, profile:Profile, isHost:boolean, connected:boolean, ready:boolean, done:boolean }} Player
  *  Array order = join order, host first (stable; UI shows players in this order).

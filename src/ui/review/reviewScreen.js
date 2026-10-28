@@ -9,10 +9,11 @@
 // submission. Clicking a card selects it and loads its url; "Back to submitted spot" loads it again (after the viewer has been panned away).
 // On a category change the first submission is selected automatically.
 // Everyone rates every OTHER capture 1..5 stars (rate { categoryId, targetPlayerId, stars }); re-rating overwrites.
+// The side panel also shows how many players have rated everything in this category (ratingProgress); purely informative, Next is never blocked.
 // The viewer is created ONCE per screen (lazily, on the first url) and re-used via load(); cards are built once and patched on every render,
 // so hover/focus survive snapshots and the <webview> is never recreated.
 import { INTENT, STARS_MAX } from '../../contracts.js';
-import { capturesOf, ratingOf, reviewCategory } from '../../core/index.js';
+import { capturesOf, ratingOf, ratingProgress, reviewCategory } from '../../core/index.js';
 import { h, avatar, button, colorHex, starRating, tag } from '../kit/index.js';
 import './review.css';
 
@@ -34,13 +35,15 @@ export function createReviewScreen({ send, createViewer } = {}) {
 
   // ---- left: submissions list + progress / host controls ----
   const bigNum = h('div', { class: 'big' });
+  const allNum = h('div', { class: 'big' });
+  const allRow = h('div', { class: 'row all' }, h('span', { class: 'eyebrow' }, 'All players'), allNum);
   const sideNote = h('p');
   const prevBtn = button({ label: '← Previous', onClick: () => send({ type: INTENT.reviewPrev }) });
   const nextBtn = button({ label: 'Next category →', variant: 'pop', size: 'lg', onClick: () => send({ type: INTENT.reviewNext }) });
   const resultsBtn = button({ label: 'Show results', onClick: () => send({ type: INTENT.showResults }) });
   const acts = h('div', { class: 'acts' });
   const hostTag = tag('Host control', { host: true });
-  const side = h('div', { class: 'rv-side' }, h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, 'Your ratings'), bigNum), sideNote, acts, hostTag);
+  const side = h('div', { class: 'rv-side' }, h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, 'Your ratings'), bigNum), allRow, sideNote, acts, hostTag);
   let actsHost = null; // which role the acts container is currently built for
 
   const list = h('div', { class: 'rv-list', role: 'list', 'aria-label': 'Submissions for this category' });
@@ -229,8 +232,10 @@ export function createReviewScreen({ send, createViewer } = {}) {
 
     // side panel
     bigNum.replaceChildren(String(done), h('small', null, ` / ${need} rated`));
+    const all = ratingProgress(state, cat.id);
+    allNum.replaceChildren(String(all.done), h('small', null, ` / ${all.total} rated`));
     const last = idx >= n - 1;
-    sideNote.textContent = isHost ? 'Move on once everyone has rated.' : 'Host picks the next category.';
+    sideNote.textContent = isHost ? 'Move on once everyone has rated (the count above is only a hint).' : 'Host picks the next category.';
     prevBtn.disabled = idx <= 0;
     nextBtn.hidden = last;
     resultsBtn.textContent = 'Show results';

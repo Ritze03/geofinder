@@ -59,7 +59,7 @@ function gameState({ index = 0, phase = PHASE.review, missing = [], ratings = {}
   return s;
 }
 
-// final ratings: totals p0 20, p1 20 (tie for 1st), p2 16, p3 8 (no capture in category 3)
+// final ratings (raw stars; scoring normalises per rater): raw totals p0 20, p1 20 (tie for 1st), p2 16, p3 8 (no capture in category 3)
 const FINAL = { 0: [[3, 2, 2], [3, 2, 2], [2, 2, 2]], 1: [[3, 3, 1], [2, 3, 2], [3, 2, 1]], 2: [[2, 1, 2], [3, 2, 1], [2, 2, 1]], 3: [[1, 2, 1], [2, 1, 1], null] };
 // partly rated category 2 (index 1): Lena (p1) rated Mo 4 and Jonas 2, Sofia still open
 const PARTIAL = { 0: [null, [4, 3, 0]], 2: [null, [0, 2, 4]], 3: [null, [3, 0, 0]] };
