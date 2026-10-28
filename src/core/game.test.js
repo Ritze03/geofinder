@@ -672,7 +672,7 @@ describe('review: ready', () => {
     let s = review();
     s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 3 });
     assert.equal(unratedCount(s, 'cat1', 'p1'), 1);
-    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 3 });
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: RATING_NO_FIT });   // "Doesn't fit" (0) counts as rated
     assert.equal(unratedCount(s, 'cat1', 'p1'), 0);
     assert.equal(unratedCount(s, 'cat2', 'p1'), 0);   // nothing captured there
   });
