@@ -66,6 +66,13 @@ export const HOST_TICK_MS = 250;
 /** Review rating range. */
 export const STARS_MIN = 1;
 export const STARS_MAX = 5;
+/** The "Doesn't fit" rating: the capture is not the requested thing. Stored as the rating value 0 (valid next to STARS_MIN..STARS_MAX
+ *  in the rate intent). It is worth a definite 0 points, whatever the normalisation, and takes no part in the rater's mean. It counts
+ *  as "rated" for progress. Always compare with this constant: 0 is falsy, so never test a rating for truthiness. */
+export const RATING_NO_FIT = 0;
+/** Per-rater normalisation only applies in games with at least this many players (state.players.length: players who leave after the
+ *  lobby stay in the list as connected:false, so the rule cannot flip mid-game). With fewer, points are the raw stars. */
+export const NORMALIZE_MIN_PLAYERS = 3;
 /** Scoring: every rater's own average is shifted to this value (see "DERIVED, NOT STORED" in section 4). */
 export const SCORE_MEAN = 3;
 
@@ -145,6 +152,9 @@ export const KEYS = freeze({
 // DERIVED, NOT STORED: points. points(player) = sum of every rating that player RECEIVED over all categories
 // (ratings[cat][player][*]), each NORMALISED per rater so harsh and generous raters do not bias the result:
 //   counted = stars - mean(all stars that rater gave in this game, every category) + SCORE_MEAN
+// ONLY when the game has NORMALIZE_MIN_PLAYERS (3) or more players (state.players.length). With 2 players each rater rates just the
+// other one, so normalising would make every total 3 x ratings and the stars meaningless: there counted = stars (raw).
+// RATING_NO_FIT (0, "Doesn't fit") always counts 0 points and is left out of the rater's mean (normalised or not).
 // (additive shift, no clamping, so a rater's average always becomes SCORE_MEAN; a rater who only ever gives the same stars, or has
 // a single rating, counts as SCORE_MEAN). Points are therefore FRACTIONAL; show them via core's formatPoints (one decimal, none if whole).
 // A missing capture simply has no ratings => 0. Results ranking = players sorted by points desc.
@@ -183,7 +193,7 @@ export const KEYS = freeze({
  *   captures:Object<string, Object<string, CaptureRef>>, // captures[categoryId][playerId]; missing key = not captured
  *   chat:ChatMessage[],                               // oldest first, <= CHAT_HISTORY_MAX
  *   reviewIndex:number,                               // index into categories of the category being reviewed (review phase), else 0
- *   ratings:Object<string, Object<string, Object<string, number>>>, // ratings[categoryId][targetPlayerId][raterPlayerId] = STARS_MIN..STARS_MAX; never a self-rating
+ *   ratings:Object<string, Object<string, Object<string, number>>>, // ratings[categoryId][targetPlayerId][raterPlayerId] = STARS_MIN..STARS_MAX or RATING_NO_FIT (0); never a self-rating
  * }} GameState
  *
  * TIMERS / CLOCK SKEW. Deadlines are absolute HOST-clock ms. Clients never trust their own clock for them: every MSG.state
@@ -311,7 +321,7 @@ export const INTENT = en(
  * | { type:'setDone', done:boolean }                                         // any player, play only (SET not toggle, like setReady)
  * | { type:'chatText', id:string, text:string }                              // any player, lobby/play/review/results; text trimmed, 1..CHAT_TEXT_MAX
  * | { type:'chatLink', id:string, url:string, text?:string }                 // any player, "Share this spot": url validated like capture's; optional caption
- * | { type:'rate', categoryId:string, targetPlayerId:string, stars:number }  // review only; categoryId must be categories[reviewIndex]; rater = actor; target != actor; target must have a capture for that category; stars STARS_MIN..STARS_MAX; re-rating overwrites
+ * | { type:'rate', categoryId:string, targetPlayerId:string, stars:number }  // review only; categoryId must be categories[reviewIndex]; rater = actor; target != actor; target must have a capture for that category; stars STARS_MIN..STARS_MAX or RATING_NO_FIT (0 = "Doesn't fit"); re-rating overwrites (switching between stars and no-fit is fine)
  * | { type:'reviewNext' }                                                    // host, review: reviewIndex+1 (no-op/invalid past the last category)
  * | { type:'reviewPrev' }                                                    // host, review: reviewIndex-1 (invalid below 0)
  * | { type:'showResults' }                                                   // host, review (any index; the UI offers it on the last category): phase 'results'

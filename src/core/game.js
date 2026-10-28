@@ -19,7 +19,7 @@
 import {
   PHASE, INTENT, HOST_INTENT, ERR, SYSTEM,
   MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, URL_MAX,
-  ROUND_TIMES_MIN, DONE_COUNTDOWN_MS, STARS_MIN, STARS_MAX, sanitizeProfile,
+  ROUND_TIMES_MIN, DONE_COUNTDOWN_MS, STARS_MIN, STARS_MAX, RATING_NO_FIT, sanitizeProfile,
 } from '../contracts.js';
 import { isAllowedMapUrl } from '../../electron/allowlist.js';
 import { allDone, startBlocker } from './selectors.js';
@@ -224,7 +224,7 @@ const PLAYER_HANDLERS = {
     run: (s, { actor, intent }) => {
       const { categoryId, targetPlayerId: target, stars } = intent;
       if (categoryId !== s.categories[s.reviewIndex]?.id) return ERR.invalid;
-      if (!Number.isInteger(stars) || stars < STARS_MIN || stars > STARS_MAX) return ERR.invalid;
+      if (stars !== RATING_NO_FIT && (!Number.isInteger(stars) || stars < STARS_MIN || stars > STARS_MAX)) return ERR.invalid;
       if (target === actor) return ERR.forbidden;
       if (!has(s.captures[categoryId], target)) return ERR.notFound;
       if (!has(s.ratings, categoryId)) s.ratings[categoryId] = {};

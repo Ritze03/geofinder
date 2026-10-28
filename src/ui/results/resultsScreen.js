@@ -1,8 +1,9 @@
 // Results screen. Renders a GameState snapshot (phase 'results'), never changes state itself.
 //   createResultsScreen({ send }) -> { el, render(view), destroy() }
 //   view = { state, meId, clockOffset }
-// Final points per player come from core's ranking(state) (ties share a rank: 1,1,3). Points are normalised per rater, so fractional:
-// always shown through formatPoints (one decimal, none if whole). Podium for the top ranks (<= 3), a per-category
+// Final points per player come from core's ranking(state) (ties share a rank: 1,1,3). Points are normalised per rater (3+ players), so fractional:
+// always shown through formatPoints (one decimal, none if whole). A cell's small line gives the average per rating and how many
+// raters said "Doesn't fit" (those count 0 points). Podium for the top ranks (<= 3), a per-category
 // breakdown table for everybody. Host: "Review again" (reviewAgain) and "Play again" (playAgain); everybody else waits for the host.
 import { INTENT, STARS_MAX } from '../../contracts.js';
 import { categoryScore, formatPoints, myCapture, raterMeans, ranking } from '../../core/index.js';
@@ -54,9 +55,9 @@ export function createResultsScreen({ send } = {}) {
     for (const r of rows) {
       cell.set(r.playerId, cats.map((c, ci) => {
         const has = !!myCapture(state, r.playerId, c.id);
-        const { points, count } = categoryScore(state, c.id, r.playerId, means);
+        const { points, count, noFit } = categoryScore(state, c.id, r.playerId, means);
         if (points > best[ci]) best[ci] = points;
-        return { has, points, count };
+        return { has, points, count, noFit };
       }));
     }
     const thead = h('thead', null, h('tr', null,
@@ -69,7 +70,7 @@ export function createResultsScreen({ send } = {}) {
     h('td', { class: 'pl' }, h('div', null, h('em', null, String(r.rank)), avatar(r.player.profile, { size: 36 }), h('b', null, nameOf(r.player)))),
     cell.get(r.playerId).map((c, ci) => {
       const cls = ['cell', c.points > 0 && c.points === best[ci] ? 'best' : '', c.points ? '' : 'zero'].filter(Boolean).join(' ');
-      const sub = !c.has ? 'no capture' : c.count ? `${formatPoints(c.points / c.count)} ★ avg` : 'not rated';
+      const sub = !c.has ? 'no capture' : c.count ? `${formatPoints(c.points / c.count)} ★ avg${c.noFit ? ` · ${c.noFit}× doesn't fit` : ''}` : 'not rated';
       return h('td', null, h('div', { class: cls, style: `--a:${Math.max(0, Math.min(1, c.points / maxPer))}` }, h('b', null, c.points ? formatPoints(c.points) : '–'), h('small', null, sub)));
     }),
     h('td', { class: 'tot' }, formatPoints(r.points), h('small', null, 'pts')))));

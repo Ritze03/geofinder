@@ -2,9 +2,9 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PHASE, ERR, SYSTEM, INTENT, HOST_INTENT, createInitialState, defaultProfile,
-  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX, URL_MAX,
+  MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX, URL_MAX, RATING_NO_FIT,
 } from '../contracts.js';
-import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, categoryScore, raterMeans, formatPoints, ratingProgress, ranking, ratingOf, stateFor } from './index.js';
+import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, categoryScore, raterMeans, formatPoints, ratingProgress, ranking, ratingOf, stateFor, normalizes } from './index.js';
 
 const T0 = 1_000_000;
 const GURL = 'https://www.google.com/maps/@48.7784234,9.1799782,3a,53.6y,123.43h,100.86t/data=!3m7!1e1!3m5!1sCIHM0ogKEICAgIDy7c62GQ!2e10!7i11264!8i5632';
@@ -648,12 +648,28 @@ describe('review: rate', () => {
     s = ok(s, 'h', { type: INTENT.reviewNext });
     bad(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 3 }, ERR.invalid);
   });
-  test('stars must be an integer in 1..5', () => {
+  test('stars must be an integer in 1..5 (or RATING_NO_FIT)', () => {
     const s = review();
-    for (const stars of [0, 6, -1, 2.5, NaN, '3', null, undefined, Infinity]) {
+    for (const stars of [6, -1, 0.5, 2.5, NaN, '3', '0', null, undefined, false, Infinity, -0.0001]) {
       bad(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars }, ERR.invalid);
     }
     for (const stars of [1, 2, 3, 4, 5]) ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars });
+  });
+  test('RATING_NO_FIT (0) is accepted, stored as 0 and can be switched with stars both ways', () => {
+    assert.equal(RATING_NO_FIT, 0);
+    let s = ok(review(), 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: RATING_NO_FIT });
+    assert.equal(s.ratings.cat1.p2.p1, RATING_NO_FIT);
+    assert.equal(ratingOf(s, 'cat1', 'p2', 'p1'), 0);
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 4 });
+    assert.equal(s.ratings.cat1.p2.p1, 4);
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: RATING_NO_FIT });
+    assert.equal(s.ratings.cat1.p2.p1, 0);
+  });
+  test('no-fit keeps every other rule: no self-rating, needs a capture, review phase only', () => {
+    const s = review();
+    bad(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: RATING_NO_FIT }, ERR.forbidden);
+    bad(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'ghost', stars: RATING_NO_FIT }, ERR.notFound);
+    bad(play(3), 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: RATING_NO_FIT }, ERR.wrongPhase);
   });
   test('self-rating is forbidden (even for a player without a capture)', () => {
     const s = review();
@@ -742,7 +758,7 @@ describe('scoring', () => {
     const c = categoryScore(s, 'cat1', 'h');
     near(c.points, 17 / 3 + 14 / 3);
     assert.equal(c.count, 2);
-    assert.deepEqual(categoryScore(s, 'cat2', 'p2'), { points: 0, count: 0 });
+    assert.deepEqual(categoryScore(s, 'cat2', 'p2'), { points: 0, count: 0, noFit: 0 });
   });
   test('every rater averages SCORE_MEAN: all points together = 3 per rating', () => {
     const s = scored();
@@ -783,7 +799,7 @@ describe('scoring', () => {
     for (const stars of [1, 3, 5]) {
       const s = ok(review(), 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars });
       near(pointsOf(s, 'p2'), 3);
-      assert.deepEqual(categoryScore(s, 'cat1', 'p2'), { points: 3, count: 1 });
+      assert.deepEqual(categoryScore(s, 'cat1', 'p2'), { points: 3, count: 1, noFit: 0 });
     }
   });
   test('normalisation: mixed raters are shifted independently and a harsh 5 can beat a generous 5', () => {
@@ -816,6 +832,82 @@ describe('scoring', () => {
     assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p2', 3, 1], ['h', 0, 2], ['p1', 0, 2]]);
     s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: 5 });   // h gave [5,5]: both count 3
     assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p1', 3, 1], ['p2', 3, 1], ['h', 0, 3]]);   // p1 and p2 tie, join order p1 < p2
+  });
+  test("doesn't fit: 0 points, left out of the rater's mean (rater gives [2,2,NO_FIT,4] -> mean over [2,2,4])", () => {
+    const s = review();
+    s.ratings = { cat1: { h: { p1: 2 } }, cat2: { h: { p1: 2 } }, cat3: { h: { p1: RATING_NO_FIT } }, cat4: { h: { p1: 4 } } };
+    near(raterMeans(s).p1, 8 / 3);
+    near(categoryScore(s, 'cat1', 'h').points, 2 - 8 / 3 + 3);
+    near(categoryScore(s, 'cat4', 'h').points, 4 - 8 / 3 + 3);
+    assert.deepEqual(categoryScore(s, 'cat3', 'h'), { points: 0, count: 1, noFit: 1 });
+    near(pointsOf(s, 'h'), 9);   // the three star ratings still average SCORE_MEAN (3 x 3), the no-fit adds 0
+  });
+  test("doesn't fit: a rater with only no-fits has no mean and everything scores 0", () => {
+    const s = review();
+    s.ratings = { cat1: { h: { p1: RATING_NO_FIT }, p2: { p1: RATING_NO_FIT } } };
+    assert.deepEqual(raterMeans(s), {});
+    assert.equal(pointsOf(s, 'h'), 0);
+    assert.equal(pointsOf(s, 'p2'), 0);
+  });
+  test("doesn't fit does not shift anybody else's points: it only removes its own rating", () => {
+    const base = review();
+    base.ratings = { cat1: { h: { p1: 5 }, p2: { p1: 1 } } };
+    const withNoFit = review();
+    withNoFit.ratings = { cat1: { h: { p1: 5 }, p2: { p1: 1 } }, cat2: { h: { p1: RATING_NO_FIT } } };
+    near(pointsOf(withNoFit, 'h'), pointsOf(base, 'h'));
+    near(pointsOf(withNoFit, 'p2'), pointsOf(base, 'p2'));
+  });
+  test("doesn't fit counts as rated for ratingProgress and can be switched to stars", () => {
+    let s = review();
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: RATING_NO_FIT });
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 0, total: 3 });   // p1 still owes p2
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: RATING_NO_FIT });
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 1, total: 3 });
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 4 });
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 1, total: 3 });
+  });
+  /** 2 players, both captured cat1 and cat2, review at index 0. */
+  function review2() {
+    let s = play(2);
+    for (const [pid, cat] of [['h', 'cat1'], ['p1', 'cat1'], ['h', 'cat2'], ['p1', 'cat2']]) {
+      s = ok(s, pid, { type: INTENT.capture, captureId: `${pid}-${cat}`, categoryId: cat, url: GURL }, T0 + 1);
+    }
+    return tick(s, s.roundEndsAt).state;
+  }
+  test("doesn't fit is 0 points in a 2-player game too", () => {
+    let s = review2();
+    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: RATING_NO_FIT });
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 5 });
+    assert.equal(pointsOf(s, 'p1'), 0);
+    assert.equal(pointsOf(s, 'h'), 5);
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 2, total: 2 });
+  });
+  test('2 players: raw stars, no normalisation (the stars matter)', () => {
+    let s = review2();
+    assert.equal(normalizes(s), false);
+    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: 5 });
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 2 });
+    s = ok(s, 'h', { type: INTENT.reviewNext });
+    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat2', targetPlayerId: 'p1', stars: 1 });
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat2', targetPlayerId: 'h', stars: 2 });
+    assert.equal(pointsOf(s, 'p1'), 6);   // 5 + 1 (normalised it would be 3 + 3)
+    assert.equal(pointsOf(s, 'h'), 4);
+    assert.deepEqual(categoryScore(s, 'cat1', 'p1'), { points: 5, count: 1, noFit: 0 });
+    assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p1', 6, 1], ['h', 4, 2]]);
+  });
+  test('3 players: the same kind of ratings are normalised per rater', () => {
+    const s = review();
+    assert.equal(normalizes(s), true);
+    s.ratings = { cat1: { h: { p1: 5, p2: 1 } }, cat2: { h: { p1: 1 }, p2: { p1: 3 } } };   // p1 gave [5,1,3] (mean 3), p2 gave [1] (mean 1)
+    near(pointsOf(s, 'h'), 5 + 1 + 3);   // p1's 5 and 1 stay (mean 3); p2's lone 1 counts 3. Raw stars would be 5 + 1 + 1
+    near(pointsOf(s, 'p2'), 3);
+  });
+  test('the player count that switches normalisation includes away players (they stay in the list after the lobby)', () => {
+    let s = review();
+    s = leave(s, 'p2');
+    assert.equal(s.players.length, 3);
+    assert.equal(s.players[2].connected, false);
+    assert.equal(normalizes(s), true);
   });
   test('formatPoints: one decimal, none when whole', () => {
     assert.equal(formatPoints(12), '12');

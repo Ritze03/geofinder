@@ -30,6 +30,7 @@
 .rcard .rate { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px 10px; flex-wrap: wrap; }
 .rcard .rate .star { font-size: 26px; }
 .rcard .rate small { color: var(--mut); font-size: 12px; }
+.rcard.nofit .rate small { color: var(--bad); font-weight: 700; }
 .rcard.miss { border-style: dashed; background: transparent; border-left-style: dashed; }
 .rcard.miss .pick { opacity: .8; }
 
@@ -49,7 +50,17 @@
 .rv-back { white-space: nowrap; }
 .rv-vbody { position: relative; flex: 1; min-height: 0; background: #1a2a1a; }
 .rv-vbody > * { position: absolute; inset: 0; width: 100%; height: 100%; }
-.rv-empty { display: grid; place-items: center; text-align: center; padding: 24px; color: var(--mut); background: repeating-linear-gradient(135deg, var(--win) 0 12px, #ffffff06 12px 24px); z-index: 2; }
+.rv-empty { display: grid; place-items: center; text-align: center; padding: 24px; color: var(--mut); background: repeating-linear-gradient(135deg, var(--win) 0 12px, #ffffff06 12px 24px), var(--win); z-index: 2; }   /* opaque: nothing behind it may show through */
+
+/* big rating bar under the viewer */
+.rv-rate { flex: none; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 16px; background: var(--panel); border-top: 1px solid var(--line); }
+.rv-rate .rb-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 160px; }
+.rv-rate .rb-name { font: 800 18px var(--display); overflow-wrap: anywhere; }
+.rv-rate .rb-note { color: var(--mut); font-size: 13px; }
+.rv-rate .stars { gap: 4px; }
+.rv-rate .star { font-size: 40px; min-width: 44px; height: 48px; padding: 0 4px; }
+.rv-nofit { white-space: nowrap; }
+.rv-nofit.on { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
 
 @media (max-width: 1000px) {
   .rv { height: auto; }
