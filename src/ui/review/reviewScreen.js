@@ -3,7 +3,9 @@
 //     createViewer(container) -> { element, load(url), destroy() }   a live map viewer (mode 'view'), mounted into `container`
 //                                (the screen appends viewer.element itself if the factory did not)
 //   view = { state, meId, clockOffset }
-// D10: the HOST steps through the categories (reviewNext / reviewPrev / showResults); everybody else follows along.
+// Every player presses Ready (reviewReady { ready }, a toggle); once ALL connected players are ready the host reducer moves on at once (next
+// category, results after the last), no countdown. Ready is never gated on rating; the button just says how many captures are still unrated.
+// The HOST additionally keeps Previous / Next category / Show results as a secondary override (reviewPrev / reviewNext / showResults).
 // Layout (full window width): a list of the current category's submissions on the left (avatar, name, stars; "Your capture" has no stars;
 // players without a capture show "No capture" / 0 points and cannot be selected), a big LIVE viewer on the right that shows the selected
 // submission. Clicking a card selects it and loads its url; "Back to submitted spot" loads it again (after the viewer has been panned away).
@@ -15,11 +17,11 @@
 // stay as a summary and rate too. The bar is hidden for your own capture, for "no capture", for non-players and when nothing is selected.
 // With nothing to show (no submissions / no selection) the viewer element is HIDDEN (the previous spot must never shine through) and
 // the "Back to submitted spot" button is hidden; a hidden viewer keeps its page, the next selection loads a fresh url into it.
-// The side panel also shows how many players have rated everything in this category (ratingProgress); purely informative, Next is never blocked.
+// The side panel also shows how many players have rated everything in this category (ratingProgress) and how many are ready; both informative.
 // The viewer is created ONCE per screen (lazily, on the first url) and re-used via load(); cards are built once and patched on every render,
 // so hover/focus survive snapshots and the <webview> is never recreated.
 import { INTENT, STARS_MAX, RATING_NO_FIT } from '../../contracts.js';
-import { capturesOf, ratingOf, ratingProgress, reviewCategory } from '../../core/index.js';
+import { capturesOf, isReviewReady, ratingOf, ratingProgress, reviewCategory, reviewReadyProgress, unratedCount } from '../../core/index.js';
 import { h, avatar, button, colorHex, starRating, tag } from '../kit/index.js';
 import './review.css';
 
@@ -45,13 +47,20 @@ export function createReviewScreen({ send, createViewer } = {}) {
   const bigNum = h('div', { class: 'big' });
   const allNum = h('div', { class: 'big' });
   const allRow = h('div', { class: 'row all' }, h('span', { class: 'eyebrow' }, 'All players'), allNum);
+  const readyNum = h('div', { class: 'big' });
+  const readyRow = h('div', { class: 'row rdy' }, h('span', { class: 'eyebrow' }, 'Ready'), readyNum);
   const sideNote = h('p');
-  const prevBtn = button({ label: '← Previous', onClick: () => send({ type: INTENT.reviewPrev }) });
-  const nextBtn = button({ label: 'Next category →', variant: 'pop', size: 'lg', onClick: () => send({ type: INTENT.reviewNext }) });
-  const resultsBtn = button({ label: 'Show results', onClick: () => send({ type: INTENT.showResults }) });
+  let iAmReady = false;   // whether the last render saw me ready (the button sends the opposite)
+  const readyLbl = h('span');
+  const readySub = h('small');
+  const readyBtn = button({ variant: 'pop', size: 'lg', class: 'rv-ready', onClick: () => send({ type: INTENT.reviewReady, ready: !iAmReady }) });
+  readyBtn.append(readyLbl, readySub);
+  const prevBtn = button({ label: '← Previous', size: 'sm', onClick: () => send({ type: INTENT.reviewPrev }) });
+  const nextBtn = button({ label: 'Next category →', size: 'sm', onClick: () => send({ type: INTENT.reviewNext }) });
+  const resultsBtn = button({ label: 'Show results', size: 'sm', onClick: () => send({ type: INTENT.showResults }) });
   const acts = h('div', { class: 'acts' });
-  const hostTag = tag('Host control', { host: true });
-  const side = h('div', { class: 'rv-side' }, h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, 'Your ratings'), bigNum), allRow, sideNote, acts, hostTag);
+  const hostTag = tag('Host override', { host: true });
+  const side = h('div', { class: 'rv-side' }, h('div', { class: 'row' }, h('span', { class: 'eyebrow' }, 'Your ratings'), bigNum), allRow, readyRow, readyBtn, sideNote, acts, hostTag);
   let actsHost = null; // which role the acts container is currently built for
 
   const list = h('div', { class: 'rv-list', role: 'list', 'aria-label': 'Submissions for this category' });
@@ -225,6 +234,7 @@ export function createReviewScreen({ send, createViewer } = {}) {
     const idx = state.reviewIndex;
 
     setActs(isHost);
+    readyBtn.hidden = !me;   // only players can be ready
 
     if (!cat) { // not (or no longer) in review: nothing to show
       eyebrow.textContent = 'Review';
@@ -283,13 +293,17 @@ export function createReviewScreen({ send, createViewer } = {}) {
     const all = ratingProgress(state, cat.id);
     allNum.replaceChildren(String(all.done), h('small', null, ` / ${all.total} rated`));
     const last = idx >= n - 1;
-    sideNote.textContent = isHost ? 'Move on once everyone has rated (the count above is only a hint).' : 'Host picks the next category.';
+    const rdy = reviewReadyProgress(state);
+    readyNum.replaceChildren(String(rdy.ready), h('small', null, ` / ${rdy.total} ready`));
+    iAmReady = isReviewReady(state, meId);
+    const unrated = me ? unratedCount(state, cat.id, meId) : 0;
+    readyBtn.classList.toggle('on', iAmReady);
+    readyBtn.classList.toggle('pop', !iAmReady);
+    readyLbl.textContent = iAmReady ? '✓ Ready' : 'Ready';
+    readySub.textContent = iAmReady ? 'Click to take it back' : unrated ? `${unrated} unrated` : '';
+    sideNote.textContent = `${last ? 'The results start' : 'The next category starts'} as soon as everyone is ready.`;
     prevBtn.disabled = idx <= 0;
     nextBtn.hidden = last;
-    resultsBtn.textContent = 'Show results';
-    resultsBtn.classList.toggle('pop', last);
-    resultsBtn.classList.toggle('lg', last);
-    resultsBtn.classList.toggle('sm', !last);
   }
 
   return {

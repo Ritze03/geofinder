@@ -294,19 +294,24 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
       await expect(c2.locator(`.rcard[data-pid="${id2}"]`)).toHaveClass(/miss/); // c2 skipped cat2
       await expect(c2.locator(`.rcard[data-pid="${id2}"] .pick`)).toBeDisabled();
     }
-    // the host sees how many players have rated everything (informative only; Next stays enabled)
+    // the host sees how many players have rated everything (informative only; nothing is blocked)
     const progress = host.locator('.rv-side .row.all .big');
-    if (ci < 2) {
-      await expect(progress).toHaveText(/^0\s*\/ 3 rated$/);
-      await expect(host.getByRole('button', { name: 'Next category →' })).toBeEnabled();
+    const readyCount = (p) => p.locator('.rv-side .row.rdy .big');
+    const readyBtn = (p) => p.locator('.rv-ready');
+    if (ci < 2) await expect(progress).toHaveText(/^0\s*\/ 3 rated$/);
+    for (const p of pages) {
+      await expect(readyCount(p)).toHaveText(/^0\s*\/ 3 ready$/);
+      await expect(readyBtn(p)).toBeEnabled();
     }
+    // the Ready button hints at what the player has not rated yet (ci 0: everybody owes two ratings)
+    if (ci === 0) await expect(readyBtn(c1)).toContainText('2 unrated');
     for (const [rater, target, stars] of RATINGS[ci] ?? []) {
       const p = pages[rater];
       if (stars === NOFIT) {
         // Ben first rates 5 stars with the card stars, then switches to "Doesn't fit" (re-rating overwrites); it counts as rated
         await rate(p, target, 5);
         await rateNoFit(p, target);
-        await expect(p.locator('.rv-side .row:not(.all) .big')).toHaveText(/^2\s*\/ 2 rated$/);
+        await expect(p.locator('.rv-side .row:not(.all):not(.rdy) .big')).toHaveText(/^2\s*\/ 2 rated$/);
       } else if (ci === 1) await rateBar(p, target, stars);   // category 2 is rated with the big stars in the bottom bar
       else await rate(p, target, stars);
     }
@@ -319,11 +324,32 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
       await rateNoFit(c2, 1);
       await expect(progress).toHaveText(/^3\s*\/ 3 rated$/);
     }
-    if (ci < CATS - 1) await host.getByRole('button', { name: 'Next category →' }).click();
+    // only the host has the override controls
+    await expect(c1.getByRole('button', { name: 'Next category →' })).toHaveCount(0);
+    await expect(c1.getByRole('button', { name: 'Show results' })).toHaveCount(0);
+
+    if (ci === 3) {
+      // host override: Next moves on without anybody pressing Ready (and clears a half-way ready state)
+      await readyBtn(c1).click();
+      await expect(readyCount(host)).toHaveText(/^1\s*\/ 3 ready$/);
+      await host.getByRole('button', { name: 'Next category →' }).click();
+      continue;
+    }
+    // everybody presses Ready; only the LAST press moves on, and then at once (no countdown)
+    await readyBtn(c1).click();
+    await readyBtn(c2).click();
+    for (const p of pages) await expect(readyCount(p)).toHaveText(/^2\s*\/ 3 ready$/);
+    await expect(readyBtn(c1)).toHaveText(/✓ Ready/);
+    await readyBtn(c2).click();   // un-ready works ...
+    for (const p of pages) await expect(readyCount(p)).toHaveText(/^1\s*\/ 3 ready$/);
+    await readyBtn(c2).click();
+    await readyBtn(host).click();
+    if (ci < CATS - 1) {
+      for (const p of pages) await expect(p.locator('.rv-head .eyebrow')).toHaveText(`Category ${ci + 2} of ${CATS}`, { timeout: 1_500 });
+    } else {
+      for (const p of pages) await expect(p.locator('[data-screen=results]')).toBeVisible({ timeout: 1_500 });
+    }
   }
-  // only the host steps; the others have no controls
-  await expect(c1.getByRole('button', { name: 'Show results' })).toHaveCount(0);
-  await host.getByRole('button', { name: 'Show results' }).click();
 
   for (const p of pages) {
     await expect(p.locator('[data-screen=results]')).toBeVisible();
