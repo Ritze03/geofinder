@@ -1,10 +1,11 @@
 // Results screen. Renders a GameState snapshot (phase 'results'), never changes state itself.
 //   createResultsScreen({ send }) -> { el, render(view), destroy() }
 //   view = { state, meId, clockOffset }
-// Final points per player come from core's ranking(state) (ties share a rank: 1,1,3). Podium for the top ranks (<= 3), a per-category
+// Final points per player come from core's ranking(state) (ties share a rank: 1,1,3). Points are normalised per rater, so fractional:
+// always shown through formatPoints (one decimal, none if whole). Podium for the top ranks (<= 3), a per-category
 // breakdown table for everybody. Host: "Review again" (reviewAgain) and "Play again" (playAgain); everybody else waits for the host.
 import { INTENT, STARS_MAX } from '../../contracts.js';
-import { categoryScore, myCapture, ranking } from '../../core/index.js';
+import { categoryScore, formatPoints, myCapture, raterMeans, ranking } from '../../core/index.js';
 import { h, avatar, button, colorHex } from '../kit/index.js';
 import './results.css';
 
@@ -33,7 +34,7 @@ export function createResultsScreen({ send } = {}) {
       h('span', { class: 'crown', 'aria-hidden': 'true' }, rank === 1 ? '👑' : ''),
       avatar(r.player.profile, { size: rank === 1 ? 96 : 76 }),
       h('span', { class: 'nm' }, nameOf(r.player)),
-      h('div', { class: 'blk' }, h('b', { class: 'num' }, String(r.points)), h('span', null, `${ordinal(rank)} place`)));
+      h('div', { class: 'blk' }, h('b', { class: 'num' }, formatPoints(r.points)), h('span', null, `${ordinal(rank)} place`)));
   }
 
   function buildPodium(rows) {
@@ -47,12 +48,13 @@ export function createResultsScreen({ send } = {}) {
   function buildTable(state, rows) {
     const cats = state.categories;
     const maxPer = Math.max(1, (state.players.length - 1) * STARS_MAX);
+    const means = raterMeans(state);
     const cell = new Map(); // playerId -> per-category info
     const best = cats.map(() => 0);
     for (const r of rows) {
       cell.set(r.playerId, cats.map((c, ci) => {
         const has = !!myCapture(state, r.playerId, c.id);
-        const { points, count } = categoryScore(state, c.id, r.playerId);
+        const { points, count } = categoryScore(state, c.id, r.playerId, means);
         if (points > best[ci]) best[ci] = points;
         return { has, points, count };
       }));
@@ -67,10 +69,10 @@ export function createResultsScreen({ send } = {}) {
     h('td', { class: 'pl' }, h('div', null, h('em', null, String(r.rank)), avatar(r.player.profile, { size: 36 }), h('b', null, nameOf(r.player)))),
     cell.get(r.playerId).map((c, ci) => {
       const cls = ['cell', c.points > 0 && c.points === best[ci] ? 'best' : '', c.points ? '' : 'zero'].filter(Boolean).join(' ');
-      const sub = !c.has ? 'no capture' : c.count ? `${(c.points / c.count).toFixed(1)} ★ avg` : 'not rated';
-      return h('td', null, h('div', { class: cls, style: `--a:${Math.min(1, c.points / maxPer)}` }, h('b', null, c.points ? String(c.points) : '–'), h('small', null, sub)));
+      const sub = !c.has ? 'no capture' : c.count ? `${formatPoints(c.points / c.count)} ★ avg` : 'not rated';
+      return h('td', null, h('div', { class: cls, style: `--a:${Math.max(0, Math.min(1, c.points / maxPer))}` }, h('b', null, c.points ? formatPoints(c.points) : '–'), h('small', null, sub)));
     }),
-    h('td', { class: 'tot' }, String(r.points), h('small', null, 'pts')))));
+    h('td', { class: 'tot' }, formatPoints(r.points), h('small', null, 'pts')))));
     tableBox.replaceChildren(h('table', null, thead, tbody));
   }
 
@@ -81,10 +83,11 @@ export function createResultsScreen({ send } = {}) {
     const isHost = !!(me && me.isHost);
 
     // the podium/table only depend on these; skip the rebuild when a snapshot (e.g. a chat message) changed nothing here
+    const means = raterMeans(state);
     const key = JSON.stringify([
       rows.map((r) => [r.playerId, r.points, r.rank, r.player.profile, r.player.connected]),
       state.categories,
-      state.categories.map((c) => state.players.map((p) => [!!myCapture(state, p.playerId, c.id), categoryScore(state, c.id, p.playerId)])),
+      state.categories.map((c) => state.players.map((p) => [!!myCapture(state, p.playerId, c.id), categoryScore(state, c.id, p.playerId, means)])),
     ]);
     if (key !== lastKey) {
       lastKey = key;

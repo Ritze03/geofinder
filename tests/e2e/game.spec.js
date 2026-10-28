@@ -183,16 +183,21 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
   expect(elapsed, 'review began only after the ~60 s countdown').toBeGreaterThan(DONE_COUNTDOWN_MS - 5_000);
   expect(elapsed, 'and not much later than that').toBeLessThan(DONE_COUNTDOWN_MS + 10_000);
 
-  // ---- 5. ratings -> results totals == stars received ----
+  // ---- 5. ratings -> results totals == NORMALISED stars received ----
   // [rater, target, stars] per category index (0 = cat1 ... ); only players with a capture can be rated
   const ids = [hid, id1, id2];
   const RATINGS = {
     0: [[0, 1, 5], [0, 2, 3], [1, 0, 4], [1, 2, 2], [2, 0, 1], [2, 1, 5]],
     1: [[0, 1, 4], [1, 0, 2], [2, 0, 5], [2, 1, 3]],
   };
+  // each rating counts as stars - (mean of everything that rater gave in the game) + 3, so every rater averages 3
+  const given = [[], [], []];
+  for (const list of Object.values(RATINGS)) for (const [rater, , stars] of list) given[rater].push(stars);
+  const raterMean = given.map((l) => l.reduce((a, b) => a + b, 0) / l.length);   // 4, 8/3, 3.5
   const expected = [0, 0, 0];
-  for (const list of Object.values(RATINGS)) for (const [, target, stars] of list) expected[target] += stars;
-  expect(expected).toEqual([12, 17, 5]);
+  for (const list of Object.values(RATINGS)) for (const [rater, target, stars] of list) expected[target] += stars - raterMean[rater] + 3;
+  expect(expected.map((x) => Math.round(x * 10) / 10)).toEqual([11.7, 14, 4.3]);   // raw stars would have been 12 / 17 / 5
+  const shown = ['11.7', '14', '4.3'];
 
   const rate = async (p, targetIdx, stars) => {
     const card = p.locator(`.rcard[data-pid="${ids[targetIdx]}"]`);
@@ -230,7 +235,14 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
       await expect(c2.locator(`.rcard[data-pid="${id2}"]`)).toHaveClass(/miss/); // c2 skipped cat2
       await expect(c2.locator(`.rcard[data-pid="${id2}"] .pick`)).toBeDisabled();
     }
+    // the host sees how many players have rated everything (informative only; Next stays enabled)
+    const progress = host.locator('.rv-side .row.all .big');
+    if (ci < 2) {
+      await expect(progress).toHaveText(/^0\s*\/ 3 rated$/);
+      await expect(host.getByRole('button', { name: 'Next category →' })).toBeEnabled();
+    }
     for (const [rater, target, stars] of RATINGS[ci] ?? []) await rate(pages[rater], target, stars);
+    if (ci < 2) await expect(progress).toHaveText(/^3\s*\/ 3 rated$/);
     if (ci < CATS - 1) await host.getByRole('button', { name: 'Next category →' }).click();
   }
   // only the host steps; the others have no controls
@@ -240,13 +252,13 @@ test('3 players play a full game: lobby gate, links instead of screenshots, done
   for (const p of pages) {
     await expect(p.locator('[data-screen=results]')).toBeVisible();
     for (let i = 0; i < 3; i++) {
-      await expect(p.locator(`tbody tr[data-pid="${ids[i]}"] td.tot`)).toHaveText(new RegExp(`^${expected[i]}\\s*pts$`));
+      await expect(p.locator(`tbody tr[data-pid="${ids[i]}"] td.tot`)).toHaveText(new RegExp(`^${shown[i].replace('.', '\\.')}\\s*pts$`));
     }
-    // ranking: Anna 17, Hosty 12, Ben 5
+    // ranking: Anna 14, Hosty 11.7, Ben 4.3
     await expect(p.locator('tbody tr').nth(0)).toHaveAttribute('data-pid', id1);
     await expect(p.locator('tbody tr').nth(1)).toHaveAttribute('data-pid', hid);
     await expect(p.locator('tbody tr').nth(2)).toHaveAttribute('data-pid', id2);
-    await expect(p.locator(`.pod[data-pid="${id1}"] .blk .num`)).toHaveText('17');
+    await expect(p.locator(`.pod[data-pid="${id1}"] .blk .num`)).toHaveText('14');
   }
   await expect(c1.getByRole('button', { name: 'Play again' })).toBeHidden(); // host-only
 

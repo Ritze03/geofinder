@@ -4,7 +4,7 @@ import {
   PHASE, ERR, SYSTEM, INTENT, HOST_INTENT, createInitialState, defaultProfile,
   MAX_PLAYERS, MAX_CATEGORIES, MAX_SUGGESTIONS, CATEGORY_LABEL_MAX, CHAT_TEXT_MAX, CHAT_HISTORY_MAX, DONE_COUNTDOWN_MS, NAME_MAX, URL_MAX,
 } from '../contracts.js';
-import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, ranking, ratingOf, stateFor } from './index.js';
+import { applyIntent, allReady, allDone, canStart, startBlocker, myCapture, reviewCategory, pointsOf, categoryScore, raterMeans, formatPoints, ratingProgress, ranking, ratingOf, stateFor } from './index.js';
 
 const T0 = 1_000_000;
 const GURL = 'https://www.google.com/maps/@48.7784234,9.1799782,3a,53.6y,123.43h,100.86t/data=!3m7!1e1!3m5!1sCIHM0ogKEICAgIDy7c62GQ!2e10!7i11264!8i5632';
@@ -671,6 +671,45 @@ describe('review: rate', () => {
   });
 });
 
+describe('review: rating progress', () => {
+  const rate = (s, who, target, stars = 3, cat = 'cat1') => ok(s, who, { type: INTENT.rate, categoryId: cat, targetPlayerId: target, stars });
+  test('counts players who rated every other capture of the category', () => {
+    let s = review();   // h, p1, p2 all captured cat1: everybody has two captures to rate
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 0, total: 3 });
+    s = rate(s, 'p1', 'h');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 0, total: 3 });   // p1 still owes p2
+    s = rate(s, 'p1', 'p2');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 1, total: 3 });
+    s = rate(s, 'p2', 'h'); s = rate(s, 'p2', 'p1');
+    s = rate(s, 'h', 'p1'); s = rate(s, 'h', 'p2');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 3, total: 3 });
+    s = rate(s, 'h', 'p1', 5);   // re-rating changes nothing
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 3, total: 3 });
+  });
+  test('a player without a capture still has to rate the others; the owner of the only capture has nothing to rate', () => {
+    let s = play(3);
+    s = ok(s, 'p1', { type: INTENT.capture, captureId: 'a', categoryId: 'cat1', url: GURL });
+    s = tick(s, s.roundEndsAt).state;
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 0, total: 2 });   // h and p2 rate p1; p1 has nothing to rate
+    s = rate(s, 'h', 'p1');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 1, total: 2 });
+    s = rate(s, 'p2', 'p1');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 2, total: 2 });
+  });
+  test('nothing submitted: 0 / 0; other categories are counted on their own', () => {
+    const s = rate(review(), 'p1', 'h');
+    assert.deepEqual(ratingProgress(s, 'cat2'), { done: 0, total: 0 });
+    assert.deepEqual(ratingProgress(s, 'nope'), { done: 0, total: 0 });
+  });
+  test('away players are not counted (they cannot rate)', () => {
+    let s = review();
+    s = leave(s, 'p2');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 0, total: 2 });
+    s = rate(s, 'p1', 'h'); s = rate(s, 'p1', 'p2');
+    assert.deepEqual(ratingProgress(s, 'cat1'), { done: 1, total: 2 });   // h still has to rate p1 and p2 (p2's capture stays)
+  });
+});
+
 describe('scoring', () => {
   /** 3 players, 2 categories, all captured; ratings given via real intents. */
   function scored() {
@@ -688,31 +727,104 @@ describe('scoring', () => {
     rate('h', 'cat2', 'p1', 5);                                  // p1: +5 = 9
     return s;
   }
-  test('pointsOf sums every star received; missing capture scores 0', () => {
+  const near = (actual, expected, msg) => assert.ok(Math.abs(actual - expected) < 1e-5, `${msg ?? ''} expected ${expected}, got ${actual}`);
+  // Raw stars given: h [2,3,5] (mean 10/3), p1 [5,1,1] (mean 7/3), p2 [4,2,1] (mean 7/3); each counts as stars - mean + 3.
+  test('pointsOf sums every rating received, normalised per rater; missing capture scores 0', () => {
     const s = scored();
-    assert.equal(pointsOf(s, 'h'), 11);
-    assert.equal(pointsOf(s, 'p1'), 9);
-    assert.equal(pointsOf(s, 'p2'), 4);   // nothing in cat2: no capture, no ratings
+    near(pointsOf(s, 'h'), 41 / 3);    // p1 5 -> 17/3, p2 4 -> 14/3, p1 1 -> 5/3, p2 1 -> 5/3
+    near(pointsOf(s, 'p1'), 9);        // h 2 -> 5/3, p2 2 -> 8/3, h 5 -> 14/3
+    near(pointsOf(s, 'p2'), 13 / 3);   // nothing in cat2: no capture, no ratings
     assert.equal(pointsOf(s, 'nobody'), 0);
     assert.equal(pointsOf(play(3), 'h'), 0);
   });
-  test('re-rating changes the sum (overwrite, not add)', () => {
+  test('categoryScore: normalised points and rating count of one category', () => {
+    const s = scored();
+    const c = categoryScore(s, 'cat1', 'h');
+    near(c.points, 17 / 3 + 14 / 3);
+    assert.equal(c.count, 2);
+    assert.deepEqual(categoryScore(s, 'cat2', 'p2'), { points: 0, count: 0 });
+  });
+  test('every rater averages SCORE_MEAN: all points together = 3 per rating', () => {
+    const s = scored();
+    near(['h', 'p1', 'p2'].reduce((a, id) => a + pointsOf(s, id), 0), 3 * 9);
+  });
+  test('raterMeans: mean of all stars a rater gave over every category', () => {
+    const m = raterMeans(scored());
+    near(m.h, 10 / 3); near(m.p1, 7 / 3); near(m.p2, 7 / 3);
+    assert.deepEqual(raterMeans(review()), {});
+  });
+  test('re-rating changes the sum (overwrite, not add) and the rater mean with it', () => {
     let s = scored();
     s = ok(s, 'h', { type: INTENT.reviewPrev });
-    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 1 });
-    assert.equal(pointsOf(s, 'h'), 11 - 5 + 1);
+    s = ok(s, 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'h', stars: 1 });   // p1 now gives [1,1,1]: all count 3
+    near(pointsOf(s, 'h'), 3 + 3 + 14 / 3 + 5 / 3);   // p1 3+3, p2 (mean 7/3) 4 -> 14/3, 1 -> 5/3
+  });
+  test('normalisation: a harsh rater (2 stars, one 4) counts the 2s as ~3 and the 4 as ~5', () => {
+    const s = review();
+    // p1 rates h and p2 in each of the categories: 13 x 2 stars and a single 4 stars (cat3 -> h)
+    s.ratings = {};
+    s.categories.forEach((c, i) => { s.ratings[c.id] = { h: { p1: i === 2 ? 4 : 2 }, p2: { p1: 2 } }; });
+    const n = s.categories.length * 2;
+    const mean = (2 * (n - 1) + 4) / n;
+    near(raterMeans(s).p1, mean);
+    near(categoryScore(s, 'cat1', 'p2').points, 2 - mean + 3);
+    assert.ok(Math.abs(2 - mean + 3 - 3) < 0.25 && Math.abs(4 - mean + 3 - 5) < 0.25, '2 -> ~3, 4 -> ~5');
+    near(categoryScore(s, 'cat3', 'h').points, 4 - mean + 3);
+    near(pointsOf(s, 'h') + pointsOf(s, 'p2'), 3 * n);
+  });
+  test('normalisation: a rater who gives 1 star to everything counts everything as 3', () => {
+    const s = review();
+    s.ratings = { cat1: { h: { p1: 1 }, p2: { p1: 1 } }, cat2: { h: { p1: 1 } } };
+    near(pointsOf(s, 'h'), 6);
+    near(pointsOf(s, 'p2'), 3);
+    assert.deepEqual(ranking(s).map((x) => x.playerId), ['h', 'p2', 'p1']);
+  });
+  test('normalisation: a rater with a single rating counts it as 3, whatever the stars', () => {
+    for (const stars of [1, 3, 5]) {
+      const s = ok(review(), 'p1', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars });
+      near(pointsOf(s, 'p2'), 3);
+      assert.deepEqual(categoryScore(s, 'cat1', 'p2'), { points: 3, count: 1 });
+    }
+  });
+  test('normalisation: mixed raters are shifted independently and a harsh 5 can beat a generous 5', () => {
+    const s = review();
+    // p1 (harsh): h 1, p2 5 -> mean 3. p2 (generous): h 5, p1 5 -> mean 5 (counts 3 each). h: p1 2, p2 4 -> mean 3.
+    s.ratings = { cat1: { h: { p1: 1, p2: 5 }, p2: { p1: 5, h: 4 }, p1: { p2: 5, h: 2 } } };
+    near(pointsOf(s, 'h'), (1 - 3 + 3) + 3);        // p1 -> 1, p2 -> 3
+    near(pointsOf(s, 'p2'), (5 - 3 + 3) + (4 - 3 + 3));   // p1 -> 5, h -> 4
+    near(pointsOf(s, 'p1'), 3 + (2 - 3 + 3));       // p2 -> 3, h -> 2
+  });
+  test('no clamping: a normalised rating may exceed 5 or drop below 0', () => {
+    const s = review();
+    s.ratings = { cat1: { h: { p1: 5 }, p2: { p1: 1 } }, cat2: { h: { p1: 1 }, p2: { p1: 1 } }, cat3: { h: { p1: 1 }, p2: { p1: 1 } }, cat4: { h: { p1: 1 }, p2: { p1: 1 } } };
+    const m = (5 + 7) / 8;   // p1 gave 5 and seven 1s: mean 1.5
+    near(categoryScore(s, 'cat1', 'h').points, 5 - m + 3);   // 6.5
+    assert.ok(categoryScore(s, 'cat1', 'h').points > 5);
+    s.ratings = { cat1: { h: { p1: 1 } }, cat2: { h: { p1: 5 } }, cat3: { h: { p1: 5 } }, cat4: { h: { p1: 5 } }, cat5: { h: { p1: 5 } } };
+    near(categoryScore(s, 'cat1', 'h').points, 1 - 4.2 + 3);   // -0.2
+    assert.ok(categoryScore(s, 'cat1', 'h').points < 0);
   });
   test('ranking: points descending with rank numbers', () => {
     const r = ranking(scored());
-    assert.deepEqual(r.map((x) => [x.playerId, x.points, x.rank]), [['h', 11, 1], ['p1', 9, 2], ['p2', 4, 3]]);
+    assert.deepEqual(r.map((x) => [x.playerId, x.rank]), [['h', 1], ['p1', 2], ['p2', 3]]);
+    near(r[0].points, 41 / 3); near(r[1].points, 9); near(r[2].points, 13 / 3);
   });
   test('ranking: ties keep join order and share a rank (1,1,3)', () => {
     let s = review();   // 3 players, nobody rated
     assert.deepEqual(ranking(s).map((x) => [x.playerId, x.rank]), [['h', 1], ['p1', 1], ['p2', 1]]);
-    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 5 });
-    assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p2', 5, 1], ['h', 0, 2], ['p1', 0, 2]]);
-    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: 5 });
-    assert.deepEqual(ranking(s).map((x) => [x.playerId, x.rank]), [['p1', 1], ['p2', 1], ['h', 3]]);   // p1 and p2 tie, join order p1 < p2
+    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p2', stars: 5 });   // a lone rating counts as 3
+    assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p2', 3, 1], ['h', 0, 2], ['p1', 0, 2]]);
+    s = ok(s, 'h', { type: INTENT.rate, categoryId: 'cat1', targetPlayerId: 'p1', stars: 5 });   // h gave [5,5]: both count 3
+    assert.deepEqual(ranking(s).map((x) => [x.playerId, x.points, x.rank]), [['p1', 3, 1], ['p2', 3, 1], ['h', 0, 3]]);   // p1 and p2 tie, join order p1 < p2
+  });
+  test('formatPoints: one decimal, none when whole', () => {
+    assert.equal(formatPoints(12), '12');
+    assert.equal(formatPoints(12.5), '12.5');
+    assert.equal(formatPoints(41 / 3), '13.7');
+    assert.equal(formatPoints(4.04), '4');
+    assert.equal(formatPoints(0), '0');
+    assert.equal(formatPoints(-0.04), '0');
+    assert.equal(formatPoints(-0.2), '-0.2');
   });
   test('points are derived: state has no points field', () => {
     assert.equal(JSON.stringify(scored()).includes('points'), false);
