@@ -1,6 +1,6 @@
 {
   "name": "geofinder",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "electron/main.js",
@@ -8,6 +8,7 @@
     "postinstall": "node node_modules/electron/install.js",
     "dev": "node electron/dev.mjs",
     "build": "vite build",
+    "dist": "vite build && electron-builder --linux AppImage --config.directories.output=build/release && electron-builder --win portable --config.directories.output=build/release --config.electronDist=",
     "test": "node --test \"electron/*.test.js\" \"src/**/*.test.js\"",
     "test:e2e": "playwright test",
     "test:electron": "vite build && playwright test -c tests/electron",

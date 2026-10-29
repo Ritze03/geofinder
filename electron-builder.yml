@@ -1,4 +1,5 @@
-# Used by install.sh: electron-builder --linux --dir (unpacked app, no installer).
+# install.sh runs: electron-builder --linux --dir (unpacked app, no installer).
+# npm run dist adds --linux AppImage --win portable into build/release (output set on the CLI).
 appId: net.ritze03.geofinder
 productName: Geofinder
 executableName: geofinder
@@ -15,3 +16,11 @@ electronDist: node_modules/electron/dist
 linux:
   target: dir
   category: Game
+  icon: icon.png
+win:
+  target: portable
+  icon: icon.png
+portable:
+  artifactName: ${productName}-${version}-portable.exe
+appImage:
+  artifactName: ${productName}-${version}.AppImage

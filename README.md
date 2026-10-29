@@ -6,6 +6,8 @@ Geobingo-style multiplayer party game with real Google and Apple Maps. One playe
 
 **Linux**: run `ritz-get install geofinder` (see [ritz-get](https://github.com/Ritze03/ritz-get)), then start `geofinder`. Without ritz-get, clone this repo and run `./install.sh --install`; `./install.sh --remove` uninstalls it again. Building needs `node` and `npm`.
 
+**Download**: the [GitHub Releases](https://github.com/Ritze03/geofinder/releases) page has a Linux `.AppImage` and a portable Windows `.exe`. The builds are unsigned, so Windows SmartScreen asks once: choose "More info", then "Run anyway".
+
 ## Development
 
 ```sh
@@ -14,6 +16,15 @@ npm run dev            # Vite + Electron
 npm test               # unit tests (node --test)
 npm run test:e2e       # Playwright
 npm run test:electron  # build, then Electron tests
+```
+
+## Releasing
+
+Releases are built locally (Wine is needed for the Windows build):
+
+```sh
+npm run dist     # build/release/Geofinder-<version>.AppImage and Geofinder-<version>-portable.exe
+gh release create v0.1.0 build/release/Geofinder-0.1.0.AppImage build/release/Geofinder-0.1.0-portable.exe
 ```
 
 ## Troubleshooting
