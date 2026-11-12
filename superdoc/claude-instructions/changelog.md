@@ -26,6 +26,16 @@ developers: plain language, what changed for them, no implementation detail.
 - **Bullets**: `- **Name**: sentence.` Bold only the lead-in. Wrap at about 90 columns,
   continuation lines indented two spaces.
 
+## Plain language (overrides everything else)
+
+Entries must be short and understandable by a user with **no technical knowledge**. Say
+**what got better for the user, never how.** No file names, function names, flags,
+libraries, protocols, config keys, commit ids or implementation details. One short sentence
+per bullet. Drop anything a non-technical user would not notice.
+
+Example: a compositor change fixing a variable-refresh-rate bug becomes
+`- **Variable refresh rate**: fixed an issue with variable refresh rate.`
+
 ## Rules
 
 - **Maintain it as you work.** Every commit that changes what users get adds a bullet in the
